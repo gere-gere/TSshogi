@@ -15,44 +15,44 @@ class Koma {
   static readonly OU: number = 8;
 
   // 成り駒
-  static readonly TO: number = this.FU + this.PROMOTE;
-  static readonly NY: number = this.KYO + this.PROMOTE;
-  static readonly NK: number = this.KEI + this.PROMOTE;
-  static readonly NG: number = this.GIN + this.PROMOTE;
-  static readonly UMA: number = this.KAK + this.PROMOTE;
-  static readonly RYU: number = this.HI + this.PROMOTE;
+  static readonly TO: number = Koma.FU + Koma.PROMOTE;
+  static readonly NY: number = Koma.KYO + Koma.PROMOTE;
+  static readonly NK: number = Koma.KEI + Koma.PROMOTE;
+  static readonly NG: number = Koma.GIN + Koma.PROMOTE;
+  static readonly UMA: number = Koma.KAK + Koma.PROMOTE;
+  static readonly RYU: number = Koma.HI + Koma.PROMOTE;
 
   // 先手の駒
-  static readonly SFU: number = SENTE + this.FU;
-  static readonly SKY: number = SENTE + this.KYO;
-  static readonly SKE: number = SENTE + this.KEI;
-  static readonly SGI: number = SENTE + this.GIN;
-  static readonly SKI: number = SENTE + this.KIN;
-  static readonly SKA: number = SENTE + this.KAK;
-  static readonly SHI: number = SENTE + this.HI;
-  static readonly SOU: number = SENTE + this.OU;
-  static readonly STO: number = SENTE + this.TO;
-  static readonly SNY: number = SENTE + this.NY;
-  static readonly SNK: number = SENTE + this.NK;
-  static readonly SNG: number = SENTE + this.NG;
-  static readonly SUM: number = SENTE + this.UMA;
-  static readonly SRY: number = SENTE + this.RYU;
+  static readonly SFU: number = SENTE + Koma.FU;
+  static readonly SKY: number = SENTE + Koma.KYO;
+  static readonly SKE: number = SENTE + Koma.KEI;
+  static readonly SGI: number = SENTE + Koma.GIN;
+  static readonly SKI: number = SENTE + Koma.KIN;
+  static readonly SKA: number = SENTE + Koma.KAK;
+  static readonly SHI: number = SENTE + Koma.HI;
+  static readonly SOU: number = SENTE + Koma.OU;
+  static readonly STO: number = SENTE + Koma.TO;
+  static readonly SNY: number = SENTE + Koma.NY;
+  static readonly SNK: number = SENTE + Koma.NK;
+  static readonly SNG: number = SENTE + Koma.NG;
+  static readonly SUM: number = SENTE + Koma.UMA;
+  static readonly SRY: number = SENTE + Koma.RYU;
 
   // 後手の駒
-  static readonly GFU: number = GOTE + this.FU;
-  static readonly GKY: number = GOTE + this.KYO;
-  static readonly GKE: number = GOTE + this.KEI;
-  static readonly GGI: number = GOTE + this.GIN;
-  static readonly GKI: number = GOTE + this.KIN;
-  static readonly GKA: number = GOTE + this.KAK;
-  static readonly GHI: number = GOTE + this.HI;
-  static readonly GOU: number = GOTE + this.OU;
-  static readonly GTO: number = GOTE + this.TO;
-  static readonly GNY: number = GOTE + this.NY;
-  static readonly GNK: number = GOTE + this.NK;
-  static readonly GNG: number = GOTE + this.NG;
-  static readonly GUM: number = GOTE + this.UMA;
-  static readonly GRY: number = GOTE + this.RYU;
+  static readonly GFU: number = GOTE + Koma.FU;
+  static readonly GKY: number = GOTE + Koma.KYO;
+  static readonly GKE: number = GOTE + Koma.KEI;
+  static readonly GGI: number = GOTE + Koma.GIN;
+  static readonly GKI: number = GOTE + Koma.KIN;
+  static readonly GKA: number = GOTE + Koma.KAK;
+  static readonly GHI: number = GOTE + Koma.HI;
+  static readonly GOU: number = GOTE + Koma.OU;
+  static readonly GTO: number = GOTE + Koma.TO;
+  static readonly GNY: number = GOTE + Koma.NY;
+  static readonly GNK: number = GOTE + Koma.NK;
+  static readonly GNG: number = GOTE + Koma.NG;
+  static readonly GUM: number = GOTE + Koma.UMA;
+  static readonly GRY: number = GOTE + Koma.RYU;
 
   // 盤外の壁
   static readonly WALL: number = 0x40;
@@ -79,9 +79,9 @@ class Koma {
 
   /*　成り判定用のSetをcanPromoteメソッド呼び出しの度に生成するのは
   不要な負荷が起こるので、クラス内で事前に一度だけ作っておく */
-  private static readonly _PROMOTABLE = new Set([this.SFU, this.SKY, this.SKE,
-  this.SGI, this.SKA, this.SHI, this.GFU, this.GKY, this.GKE, this.GGI,
-  this.GKA, this.GHI]);
+  private static readonly _PROMOTABLE = new Set([Koma.SFU, Koma.SKY, Koma.SKE,
+  Koma.SGI, Koma.SKA, Koma.SHI, Koma.GFU, Koma.GKY, Koma.GKE, Koma.GGI,
+  Koma.GKA, Koma.GHI]);
 
   static canPromote(koma: number) {
     if (this._PROMOTABLE.has(koma)) return true;
@@ -195,10 +195,7 @@ class Koma {
     const teban: number = koma & 0x30;
     if (teban === 0 || teban === 0x30) return false;
     // 後手の駒の場合は先手側に向きを揃える
-    if (teban === GOTE) {
-      if (jump <= 7) jump = 7 - jump;
-      if (jump >= 8) jump = 19 - jump;
-    }
+    if (teban === GOTE) jump = 7 - jump;
     return this.jumpData[komasyu][jump];
   }
 

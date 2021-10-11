@@ -70,13 +70,16 @@ class GenerateMoves {
     // 三段目以上(後手なら七段目以下)で、成れる駒は
     // 成と不成の両方を生成して追加
     if ((to.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation) ||
-      ((from.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation)) && Koma.canPromote(koma)) {
+      (from.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation) && Koma.canPromote(koma)) {
       const te: Te = new Te(koma, from, to, false);
       list.push(te);
       const tePromote: Te = new Te(koma, from, to, true);
       list.push(tePromote);
       return;
     }
+    // どれにも該当しない場合は不成のみ生成
+    const te: Te = new Te(koma, from, to, false);
+    list.push(te);
   }
 
   /* 打ち歩詰めになっていないかチェックする
@@ -200,11 +203,28 @@ class GenerateMoves {
 
   // 盤上の特定の駒一つ分の動き、飛び駒用
   static generateOneKomaJumps(list: Te[], k: Kyokumen, koma: number, from: Position): void {
-    for (let direct: number = 0; direct <= 8; direct++) {
+    for (let direct: number = 0; direct <= 7; direct++) {
       if (Koma.canJump(koma, direct)) {
-        const to: Position = from.makeMovedPosition(direct);
-        if (to.suji >= 1 && to.suji <= 9 && to.dan >= 1 && to.dan <= 9) {
-          if (Koma.isSelf(k.teban, k.getKomaData(to))) continue;
+        // 飛び方向に一マスずつ動かしていく
+        for(let i: number = 1; i < 9; i++) {
+          let to: Position = from.clone();
+          for(let j: number = 0; j < i; j++) {
+            to.add(direct);
+          }
+          // 盤の範囲を超えていればbreak
+          if (to.suji < 1 || to.suji > 9 || to.dan < 1 || to.dan > 9) break;
+          // 自分の駒でふさがっている場合もbreak
+          if (Koma.isSelf(k.teban, k.getKomaData(to))) break;
+          // 相手の駒がある場合、１歩目ならbreak、２歩目以降なら手を生成した上でbreak
+          if (Koma.isEnemy(k.teban, k.getKomaData(to))) {
+            if(i !== 1) {
+              this.addTe(list, k.teban, koma, from, to);
+            }
+            break;
+          }
+          // 盤内かつ空きだった。１歩目の場合はOneKomaMovesと被るので生成せずにcontinue
+          if (i === 1) continue;
+          // 盤内かつ空きであり、２歩目以降だった。手を生成して次の一歩へ
           this.addTe(list, k.teban, koma, from, to);
         }
       }

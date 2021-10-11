@@ -23,7 +23,7 @@ class Te {
   // 手の文字列化
   toString(): string {
     return sujiStr[this.to.suji] + danStr[this.to.dan] + Koma.toString(this.koma)
-      + (this.promote ? '成' : '') + (this.from.suji === 0 ? '打    ' : `(${sujiStr[this.from.suji] + danStr[this.to.dan]})`)
+      + (this.promote ? '成' : '') + (this.from.suji === 0 ? '打    ' : `(${sujiStr[this.from.suji] + danStr[this.from.dan]})`)
       + (this.promote ? '' : '  ');
   }
 }

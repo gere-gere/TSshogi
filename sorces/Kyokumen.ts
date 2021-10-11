@@ -235,7 +235,7 @@ class Kyokumen {
     s += '  9   8   7   6   5   4   3   2   1\n';
     s += '+---+---+---+---+---+---+---+---+---+\n';
     for (let dan: number = 1; dan <= 9; dan++) {
-      for (let suji: number = 9; suji <= 1; suji--) {
+      for (let suji: number = 9; suji >= 1; suji--) {
         s += '|';
         s += Koma.toBanString(this.ban[suji][dan]);
       }
