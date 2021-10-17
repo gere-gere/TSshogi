@@ -1,3 +1,7 @@
 Thumbs.db
+package.json
+package-lock.json
+tsconfig.json
+node_modules
 img
 kifu

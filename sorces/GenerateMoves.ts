@@ -56,7 +56,7 @@ class GenerateMoves {
     }
 
     // 一段目（後手なら九段目）の歩と香は成る
-    if ((Koma.getKomashu(koma) === Koma.FU || Koma.getKomashu(Koma.KYO)) && to.dan === dan) {
+    if ((Koma.getKomashu(koma) === Koma.FU || Koma.getKomashu(koma) === Koma.KYO) && to.dan === dan) {
       const te: Te = new Te(koma, from, to, true);
       list.push(te);
       return;
@@ -69,8 +69,8 @@ class GenerateMoves {
     }
     // 三段目以上(後手なら七段目以下)で、成れる駒は
     // 成と不成の両方を生成して追加
-    if ((to.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation) ||
-      (from.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation) && Koma.canPromote(koma)) {
+    if ((to.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation ||
+      from.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation) && Koma.canPromote(koma)) {
       const te: Te = new Te(koma, from, to, false);
       list.push(te);
       const tePromote: Te = new Te(koma, from, to, true);

@@ -118,6 +118,7 @@ class Kyokumen {
     "-OU", "-TO", "-NY", "-NK", "-NG", "", "-UM", "-RY"
   ];
 
+  // 棋譜（文字列の配列へ変換済）を受け取り局面に反映させる
   readCsaKifu(csaKifu: string[]): void {
     // 駒箱に入っている残り駒
     const restKoma: number[] = Array(8).fill(0);

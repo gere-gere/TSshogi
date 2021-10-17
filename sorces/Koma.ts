@@ -84,8 +84,7 @@ class Koma {
   Koma.GKA, Koma.GHI]);
 
   static canPromote(koma: number) {
-    if (this._PROMOTABLE.has(koma)) return true;
-    return false;
+    return this._PROMOTABLE.has(koma);
   }
 
   // ここよりKomaMoves（駒の動き）についての実装

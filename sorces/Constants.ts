@@ -1,4 +1,4 @@
-/* グローバル定数*/
+/* グローバル定数 */
 // 手番
 const SENTE: number = 0x10;
 const GOTE: number = 0x20;
@@ -13,3 +13,6 @@ const danStr: string[] = [
   "", "一", "二", "三", "四", "五", "六", "七", "八", "九"
 ];
 
+// モジュール読み込み
+const fs = require('fs');
+const readlineSync = require('readline-sync');

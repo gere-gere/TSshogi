@@ -1,5 +1,5 @@
 'use strict';
-/* グローバル定数*/
+/* グローバル定数 */
 // 手番
 const SENTE = 0x10;
 const GOTE = 0x20;
@@ -7,6 +7,9 @@ const GOTE = 0x20;
 const sujiStr = ['', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
 // 段を表す文字列の定義
 const danStr = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+// モジュール読み込み
+const fs = require('fs');
+const readlineSync = require('readline-sync');
 // 合法手の候補リストを生成する静的クラス
 class GenerateMoves {
   /* 手を指した後に自身の玉に王手がかかっていないか、
@@ -59,7 +62,10 @@ class GenerateMoves {
       fluctuation = -1;
     }
     // 一段目（後手なら九段目）の歩と香は成る
-    if ((Koma.getKomashu(koma) === Koma.FU || Koma.getKomashu(Koma.KYO)) && to.dan === dan) {
+    if (
+      (Koma.getKomashu(koma) === Koma.FU || Koma.getKomashu(koma) === Koma.KYO) &&
+      to.dan === dan
+    ) {
       const te = new Te(koma, from, to, true);
       list.push(te);
       return;
@@ -76,8 +82,9 @@ class GenerateMoves {
     // 三段目以上(後手なら七段目以下)で、成れる駒は
     // 成と不成の両方を生成して追加
     if (
-      to.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation ||
-      (from.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation && Koma.canPromote(koma))
+      (to.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation ||
+        from.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation) &&
+      Koma.canPromote(koma)
     ) {
       const te = new Te(koma, from, to, false);
       list.push(te);
@@ -200,7 +207,6 @@ class GenerateMoves {
     for (let direct = 0; direct <= 7; direct++) {
       if (Koma.canJump(koma, direct)) {
         // 飛び方向に一マスずつ動かしていく
-        // ただし１歩目はOneKomaMovesと被るので手を生成しない
         for (let i = 1; i < 9; i++) {
           let to = from.clone();
           for (let j = 0; j < i; j++) {
@@ -253,8 +259,7 @@ class Koma {
     return koma & 0x0f;
   }
   static canPromote(koma) {
-    if (this._PROMOTABLE.has(koma)) return true;
-    return false;
+    return this._PROMOTABLE.has(koma);
   }
   static canMove(koma, move) {
     // 駒種が不正なら即リターン
@@ -556,6 +561,7 @@ class Kyokumen {
     // 見つからずにループを終えた場合はダミーとして盤外を返す
     return new Position(-2, -2);
   }
+  // 棋譜（文字列の配列へ変換済）を受け取り局面に反映させる
   readCsaKifu(csaKifu) {
     // 駒箱に入っている残り駒
     const restKoma = Array(8).fill(0);
@@ -734,12 +740,24 @@ Kyokumen.csaKomaTbl = [
   '-UM',
   '-RY',
 ];
-// モジュール読み込み
-const fs = require('fs');
-// 起動時に走るMainクラス
+// 起動時に走るMainクラス。静的。
 class Main {
   // 起動時に呼び出されるメイン関数
-  static main() {
+  // 引数としてPlyer情報を受け取る
+  static main(sente, gote) {
+    // プレイヤー情報の処理。senteだけ受け取りgoteが省略された場合は
+    // goteはAIとする。両方とも省略されている場合は
+    // sente：Human、gote：AIとする。
+    if (!sente && !gote) {
+      this.player[0] = new Human();
+      this.player[1] = new Sikou();
+    } else if (sente && !gote) {
+      this.player[0] = sente.toUpperCase() === 'HUMAN' ? new Human() : new Sikou();
+      this.player[1] = new Sikou();
+    } else {
+      this.player[0] = sente?.toUpperCase() === 'HUMAN' ? new Human() : new Sikou();
+      this.player[1] = gote?.toUpperCase() === 'HUMAN' ? new Human() : new Sikou();
+    }
     const k = new Kyokumen();
     if (!process.argv[2]) {
       k.teban = SENTE;
@@ -751,21 +769,66 @@ class Main {
         const kifuStr = fs.readFileSync('../kifu' + filename, 'utf-8');
         kifu = kifuStr.split('\n');
       } catch {
-        throw '棋譜ファイルを読み込めません。ファイル名を確認してください。';
+        throw '棋譜ファイルを読み込めません。ファイル名を確認してください。\n';
       }
       k.readCsaKifu(kifu);
     }
-    // 局面を一度出力する
-    console.log(k.toString());
-    // この局面における合法手も表示してみる
-    const te = GenerateMoves.generateLegalMoves(k);
-    let teStr = '';
-    console.log(`可能手：${te.length}手`);
-    for (let i = 0; i < te.length; i++) {
-      if (i !== 0) teStr += ', ';
-      teStr += te[i].toString();
+    /* テスト用の表示
+        // この局面における合法手も表示してみる
+        console.log(k.toString());
+        const legalTe: Te[] = GenerateMoves.generateLegalMoves(k);
+        let teStr: string = '';
+        console.log(`可能手：${legalTe.length}手`);
+        for(let i: number = 0; i < legalTe.length; i++) {
+          if(i !== 0) teStr += ', ';
+          teStr += legalTe[i].toString();
+        }
+        console.log(teStr);
+        */
+    // 対戦のメインループ
+    while (true) {
+      // 現在の局面を履歴に残す
+      this.kyokumenHistory.push(k.clone());
+      // 現在の局面での合法手を生成
+      const legalTe = GenerateMoves.generateLegalMoves(k);
+      // 合法手が一つもない＝詰み
+      if (legalTe.length === 0) {
+        console.log(k.teban === SENTE ? '後手の勝ち\n' : '先手の勝ち\n');
+        break;
+      }
+      // 千日手チェック。連続王手の千日手には未対応。
+      let sameKyokumen = 0;
+      this.kyokumenHistory.forEach((kyokumen) => {
+        if (k.equals(kyokumen)) sameKyokumen++;
+      });
+      if (sameKyokumen >= 4) {
+        console.log('【 千日手 】\n');
+        break;
+      }
+      // 局面表示
+      console.log(k.toString());
+      let nextTe =
+        k.teban === SENTE
+          ? this.player[0].getNextTe(k, legalTe)
+          : this.player[1].getNextTe(k, legalTe);
+      // 指し手を表示
+      console.log(nextTe.toString());
+      // 指し手が合法手に含まれない場合は反則負け
+      // 入力として合法手以外を受け付けないようにする処理は
+      // UI側で対応することとする（現状、非対応）
+      // 投了も不完全な対応（反則負け扱いとなる）
+      if (!nextTe.contains(legalTe)) {
+        console.log('合法手でない手が指されました。\n【 反則負け 】\n');
+        console.log(k.teban === SENTE ? '後手の勝ち\n' : '先手の勝ち\n');
+        break;
+      }
+      // 指し手で局面を進める
+      k.move(nextTe);
+      k.teban = k.teban === SENTE ? GOTE : SENTE;
     }
-    console.log(teStr);
+    // 対局終了
+    console.log('【 終了図 】');
+    console.log(k.toString());
   }
 }
 Main.shokiBanmen = [
@@ -781,6 +844,101 @@ Main.shokiBanmen = [
   [0, Koma.GKY, 0, Koma.GFU, 0, 0, 0, Koma.SFU, 0, Koma.SKY, 0],
   [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ];
+// プレイヤー情報（AIかHumanか）
+Main.player = [];
+// 局面履歴
+Main.kyokumenHistory = [];
+/* 入力ルール
+  1）盤上の駒を動かす場合、移動元の位置を二桁の数字で
+  続けて移動先の位置を二桁の数字で、合わせて四桁の数字で入力する。
+    初手２六歩の場合は「2726」となる。
+  2)成る時は末尾に「*」を付ける。
+    ２三歩成の場合は「2423*」となる。
+  3)持駒を打つ際は移動元の代わりに先頭二桁で駒種を表す。
+    ３三角打の場合は「0633」となる。
+  4)投了の際は「%TORYO」と入力する。
+  5)デバッグ用：「p」で合法手一覧を生成
+*/
+class Human {
+  getNextTe(k, legalTe) {
+    // 指し手を格納する変数。投了で初期化済。
+    // 正しい入力があれば合法手で書き換えられる。
+    const toryoPosi = new Position(0, 0);
+    let te = new Te(0, toryoPosi, toryoPosi, false);
+    do {
+      console.log(k.teban === SENTE ? '先手番です\n' : '後手番です\n');
+      // 入力待ち
+      let input = readlineSync.question('move?: ');
+      // 入力が投了であれば投了となる手を生成して終了
+      if (input.toUpperCase() === '%TORYO') {
+        break;
+      }
+      // コマンドpであれば合法手一覧を出力
+      if (input === 'p') {
+        let teStr = '';
+        console.log(`可能手：${legalTe.length}手`);
+        for (let i = 0; i < legalTe.length; i++) {
+          if (i !== 0) teStr += ', ';
+          teStr += legalTe[i].toString();
+        }
+        console.log(teStr);
+        continue;
+      }
+      // 入力内容を解析
+      let promote = false;
+      if (input.length === 5) {
+        if (input.charAt(4) === '*') {
+          promote = true;
+        } else {
+          console.log('入力内容が不正です（再入力）');
+          continue;
+        }
+      }
+      let fromSuji = 0,
+        fromDan = 0,
+        toSuji = 0,
+        toDan = 0;
+      fromSuji = parseInt(input.charAt(0));
+      fromDan = parseInt(input.charAt(1));
+      toSuji = parseInt(input.charAt(2));
+      toDan = parseInt(input.charAt(3));
+      if (
+        Number.isNaN(fromSuji) ||
+        Number.isNaN(fromDan) ||
+        Number.isNaN(toSuji) ||
+        Number.isNaN(toDan)
+      ) {
+        console.log('入力内容が不正です（再入力）');
+        continue;
+      }
+      let koma = 0;
+      // 先頭が0ならば駒打ち
+      if (fromSuji === 0) {
+        koma = fromDan | k.teban;
+        fromDan = 0;
+      }
+      const from = new Position(fromSuji, fromDan);
+      const to = new Position(toSuji, toDan);
+      if (fromSuji !== 0) {
+        // 駒を打つ手でない場合は駒を取得
+        koma = k.getKomaData(from);
+      }
+      te = new Te(koma, from, to, promote);
+      if (!te.contains(legalTe)) {
+        console.log('合法手ではありません（再入力）');
+        continue;
+      }
+      // 全て問題なければループを抜ける
+      break;
+    } while (true);
+    return te;
+  }
+}
+class Sikou {
+  getNextTe(k, legalTe) {
+    return legalTe[Math.floor(Math.random() * legalTe.length)];
+  }
+}
 class Position {
   constructor(suji = 0, dan = 0) {
     this.suji = suji;
@@ -827,10 +985,19 @@ class Te {
   equals(te) {
     return (
       te.koma === this.koma &&
-      te.from === this.from &&
-      te.to === this.to &&
+      te.from.suji === this.from.suji &&
+      te.from.dan === this.from.dan &&
+      te.to.suji === this.to.suji &&
+      te.to.dan === this.to.dan &&
       te.promote === this.promote
     );
+  }
+  // 引数としてTeの配列を受け取り、その配列に自身が含まれるかチェック
+  contains(list) {
+    for (let i = 0; i < list.length; i++) {
+      if (this.equals(list[i])) return true;
+    }
+    return false;
   }
   clone() {
     return new Te(this.koma, this.from, this.to, this.promote);

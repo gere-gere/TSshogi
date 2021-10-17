@@ -12,8 +12,17 @@ class Te {
   }
 
   equals(te: Te): boolean {
-    return (te.koma === this.koma && te.from === this.from &&
-      te.to === this.to && te.promote === this.promote);
+    return (te.koma === this.koma && te.from.suji === this.from.suji &&
+      te.from.dan === this.from.dan && te.to.suji === this.to.suji &&
+      te.to.dan === this.to.dan && te.promote === this.promote);
+  }
+
+  // 引数としてTeの配列を受け取り、その配列に自身が含まれるかチェック
+  contains(list: Te[]): boolean {
+    for(let i: number = 0; i < list.length; i++) {
+      if(this.equals(list[i])) return true;
+    }
+    return false;
   }
 
   clone(): Te {
