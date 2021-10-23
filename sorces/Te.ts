@@ -3,12 +3,14 @@ class Te {
   from: Position;
   to: Position;
   promote: boolean;
+  capture: number;  // 取った駒の情報。先手後手成フラグごと保持する
 
-  constructor(koma: number, from: Position, to: Position, promote: boolean) {
+  constructor(koma: number, from: Position, to: Position, promote: boolean, capture: number) {
     this.koma = koma;
     this.from = from;
     this.to = to;
     this.promote = promote;
+    this.capture = capture;
   }
 
   equals(te: Te): boolean {
@@ -26,7 +28,7 @@ class Te {
   }
 
   clone(): Te {
-    return new Te(this.koma, this.from, this.to, this.promote);
+    return new Te(this.koma, this.from, this.to, this.promote, this.capture);
   }
 
   // 手の文字列化

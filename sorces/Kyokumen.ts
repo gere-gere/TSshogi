@@ -2,6 +2,9 @@ class Kyokumen {
   ban: number[][];
   hand: number[][];  //先手後手の持駒の配列が入る
   teban: number = SENTE;
+  // 玉の位置をプロパティとして保持する。初期値は絶対に利きの届かない盤外。
+  kingS: Position = new Position(-2, -2);
+  kingG: Position = new Position(-2, -2);
 
   constructor() {
     this.ban = Array(11);
@@ -64,47 +67,95 @@ class Kyokumen {
   // 自身の駒を取るような手は渡されないことが保証されている
   //（このメソッド内ではその判定はしない）
   move(te: Te): void {
-    let koma: number = te.koma;
-    // 移動先に駒があったら持駒にする
-    const targetKoma: number = this.getKomaData(te.to);
-    if (targetKoma !== Koma.EMPTY) {
-      const planeKoma: number = targetKoma & 0x07;  // 成フラグや先手後手フラグをクリア
-      if (Koma.isSente(targetKoma)) {
-        this.hand[1][planeKoma]++;
+    // 駒を取る手であればその駒を持駒にする
+    if (te.capture !== Koma.EMPTY) {
+      const koma: number = te.capture & 0x07;  // 成フラグや先手後手フラグをクリア
+      if (Koma.isSente(te.capture)) {
+        this.hand[1][koma]++;
       } else {
-        this.hand[0][planeKoma]++;
+        this.hand[0][koma]++;
       }
     }
 
     // 持駒を打つ手だった場合はその持駒を減らす
     if (te.from.suji === 0) {
-      const planeKoma: number = koma & 0x07;
-      if (Koma.isSente(koma)) {
-        this.hand[0][planeKoma]--;
+      const koma: number = te.koma & 0x07;
+      if (Koma.isSente(te.koma)) {
+        this.hand[0][koma]--;
       } else {
-        this.hand[1][planeKoma]--;
+        this.hand[1][koma]--;
       }
     } else {  //盤上の駒だった場合は元の位置をEMPTYに
       this.putKoma(te.from, Koma.EMPTY);
     }
 
     // 駒を移動先に進める
-    if (te.promote) koma = koma | Koma.PROMOTE;
+    const koma = te.promote ? te.koma | Koma.PROMOTE : te.koma;
     this.putKoma(te.to, koma);
+
+    // 玉の位置を更新
+    if(te.koma === Koma.SOU) {
+      this.kingS = te.to;
+    } else if(te.koma === Koma.GOU) {
+      this.kingG = te.to;
+    }
   }
 
-  // 玉の位置を得る
-  searchGyoku(teban: number): Position {
-    const targetGyoku: number = teban | Koma.OU;
+  // 手を一手巻き戻す（moveの逆）
+  back(te: Te): void {
+    // 取った駒を元に戻す（取ってないならEMPTYに戻す）
+    this.putKoma(te.to, te.capture);
+
+    // 取った駒があった場合、戻した持駒を減らす
+    if(te.capture !== Koma.EMPTY) {
+      const koma: number = te.capture & 0x07;
+      // 持駒を減らす
+      if(Koma.isSente(te.capture)) {
+        this.hand[1][koma]--;
+      } else {
+        this.hand[0][koma]--;
+      }
+    }
+
+    // 打ち駒だった場合、持駒に戻す
+    if(te.from.suji === 0) {
+      const koma: number = te.koma & 0x07;
+      if(Koma.isSente(te.koma)) {
+        this.hand[0][koma]++;
+      } else {
+        this.hand[1][koma]++;
+      }
+    // 打駒でなかった場合、元の位置に戻す
+    } else {
+      this.putKoma(te.from, te.koma);
+    }
+
+    // 玉であった場合は玉の位置情報を戻す
+    if(te.koma === Koma.SOU) {
+      this.kingS = te.from;
+    } else if(te.koma === Koma.GOU) {
+      this.kingG = te.from;
+    }
+  }
+
+  // 玉の位置を再探索し設定
+  researchGyoku(): void {
+    this.kingS.change(-2, -2);
+    this.kingG.change(-2, -2);
     for (let suji = 1; suji <= 9; suji++) {
       for (let dan = 1; dan <= 9; dan++) {
-        if (this.ban[suji][dan] === targetGyoku) {
-          return new Position(suji, dan);
+        if (this.ban[suji][dan] === Koma.SOU) {
+          this.kingS.change(suji, dan);
+        } else if(this.ban[suji][dan] === Koma.GOU) {
+          this.kingG.change(suji, dan);
         }
       }
     }
-    // 見つからずにループを終えた場合はダミーとして盤外を返す
-    return new Position(-2, -2);
+  }
+
+  // 玉位置を取得
+  searchGyoku(teban: number) {
+    return teban === SENTE ? this.kingS : this.kingG;
   }
 
   // ここよりファイル入出力
@@ -250,6 +301,53 @@ class Kyokumen {
     }
     s += '\n';
     return s;
+  }
+
+  // 局面評価のための駒の価値
+  static komaValue: number[] = [
+    0, 100, 290, 370, 480, 580, 900, 1070,   // 先手後手どちらでもない空～飛まで
+    10000, 580, 580, 580, 580, 0, 1200, 1400,    // 先手後手どちらでもない王～成駒～竜まで
+    0, 100, 290, 370, 480, 580, 900, 1070,    // 無、先手の歩～飛
+    10000, 580, 580, 580, 580, 0, 1200, 1400,    // 先手の王～成駒～竜
+    0, -100, -290, -370, -480, -580, -900, -1070,   // 無、後手の歩～飛
+    -10000, -580, -580, -580, -580, 0, -1200, -1400   // 後手の王～成駒～竜
+  ];
+
+  // 局面評価関数。現時点では駒の価値の総和に過ぎないが、
+  // 評価方法を発展させる際はここに各基準を追記していく
+  evaluate(): number {
+    let eva: number = 0;
+    // 盤上の駒の価値を全て加算
+    for(let suji: number = 1; suji <= 9; suji++) {
+      for(let dan: number = 1; dan <= 9; dan++) {
+        const koma: number = this.ban[suji][dan];
+        // 位置による価値調整用の係数
+        let coefficient = 1;
+        // 下段の香車に力有り
+        if(koma === Koma.SKY) {
+          coefficient = 0.91 + dan * 0.01;
+        } else if(koma === Koma.GKY) {
+          coefficient = 1.01 - dan * 0.01;
+        }
+        // 桂馬の高跳び歩の餌食
+        if(koma === Koma.SKE) {
+          coefficient = 0.991 + dan * 0.001;
+        } else if(koma === Koma.GKE) {
+          coefficient = 1.001 - dan * 0.001;
+        }
+        eva += Kyokumen.komaValue[koma] * coefficient;
+      }
+    }
+    // 持駒の価値を全て加算
+    for(let teban: number = 0; teban < 2; teban++) {
+      for(let koma: number = 1; koma < 8; koma++) {
+        const sign: number = teban === 0 ? 1 : -1;
+        // 歩は枚数が増える毎に価値が目減りする。一枚目（歩切れでない）は少し価値が上がる。
+        const coefficient: number = koma !== Koma.FU ? 1 : 1.05 - this.hand[teban][1] * 0.03;
+        eva += this.hand[teban][koma] * Kyokumen.komaValue[koma] * coefficient * sign;
+      }
+    }
+    return eva;
   }
 
 }

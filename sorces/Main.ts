@@ -52,6 +52,8 @@ class Main {
       }
       k.readCsaKifu(kifu);
     }
+    // 玉位置情報をセット
+    k.researchGyoku();
 
 
     /* テスト用の表示
@@ -93,7 +95,7 @@ class Main {
       // 局面表示
       console.log(k.toString());
 
-      let nextTe: Te = k.teban === SENTE ? this.player[0].getNextTe(k, legalTe) : this.player[1].getNextTe(k, legalTe);
+      let nextTe: Te = k.teban === SENTE ? this.player[0].getNextTe(k) : this.player[1].getNextTe(k);
       // 指し手を表示
       console.log(nextTe.toString());
 

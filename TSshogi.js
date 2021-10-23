@@ -17,15 +17,17 @@ class GenerateMoves {
   static removeSelfMate(k, list) {
     const removed = [];
     list.forEach((te) => {
-      const test = k.clone();
-      test.move(te);
-      const gyokuPosition = test.searchGyoku(k.teban);
-      // 玉の周辺から相手の駒が利いていたら、手に加えずリターン
+      k.move(te);
+      const gyokuPosition = k.searchGyoku(k.teban);
+      // 玉の周辺から相手の駒が利いていたら、手に加えずリターン（forEachを一周飛ばす
       for (let direct = 0; direct <= 11; direct++) {
         const pos = gyokuPosition.clone();
         pos.sub(direct);
-        const koma = test.getKomaData(pos);
-        if (Koma.isEnemy(test.teban, koma) && Koma.canMove(koma, direct)) return;
+        const koma = k.getKomaData(pos);
+        if (Koma.isEnemy(k.teban, koma) && Koma.canMove(koma, direct)) {
+          k.back(te);
+          return;
+        }
       }
       // 玉周りの８方向からの飛び利きがあったらリターン
       for (let direct = 0; direct <= 7; direct++) {
@@ -33,16 +35,24 @@ class GenerateMoves {
         let koma;
         do {
           pos.sub(direct);
-          koma = test.getKomaData(pos);
+          koma = k.getKomaData(pos);
           // 味方駒でさえぎられていたらbreak
-          if (Koma.isSelf(test.teban, koma)) break;
-          // 相手の駒で、かつその方向に移動可能な飛び駒であれば
-          // 王手がかかっていることになるのでリターン
-          if (Koma.isEnemy(test.teban, koma) && Koma.canJump(koma, direct)) return;
-          // 王手ではない相手の駒でさえぎられていたらbreak
-          if (Koma.isEnemy(test.teban, koma)) break;
+          if (Koma.isSelf(k.teban, koma)) break;
+          // 王手ではない相手の駒でさえぎられていた
+          if (Koma.isEnemy(k.teban, koma)) {
+            // かつ、その相手の駒はその方向に飛べるなら王手なのでリターン
+            if (Koma.canJump(koma, direct)) {
+              k.back(te);
+              return;
+            }
+            // 王手ではなかったのでbreakだけ
+            break;
+          }
+          // 駒がなかったのでもう一周
         } while (koma !== Koma.WALL);
       }
+      // リターンされずにforループを抜けた。忘れずに局面を戻しておく。
+      k.back(te);
       // 直接の利き、飛び利きのいずれも問題なかったのでリストに加える
       removed.push(te);
     });
@@ -50,7 +60,7 @@ class GenerateMoves {
   }
   // 与えられた配列"list"に成、不成を考慮して
   // 生成した候補手を追加する
-  static addTe(list, teban, koma, from, to) {
+  static addTe(k, list, teban, koma, from, to) {
     // 先手後手でほぼ同じ処理を二回書きたくないので
     // 先手後手で変化する条件部分だけ前もって変数にしておく
     let dan, fluctuation;
@@ -66,7 +76,7 @@ class GenerateMoves {
       (Koma.getKomashu(koma) === Koma.FU || Koma.getKomashu(koma) === Koma.KYO) &&
       to.dan === dan
     ) {
-      const te = new Te(koma, from, to, true);
+      const te = new Te(koma, from, to, true, k.getKomaData(to));
       list.push(te);
       return;
     }
@@ -75,7 +85,7 @@ class GenerateMoves {
       Koma.getKomashu(koma) === Koma.KEI &&
       to.dan * fluctuation <= (dan + fluctuation) * fluctuation
     ) {
-      const te = new Te(koma, from, to, true);
+      const te = new Te(koma, from, to, true, k.getKomaData(to));
       list.push(te);
       return;
     }
@@ -86,14 +96,14 @@ class GenerateMoves {
         from.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation) &&
       Koma.canPromote(koma)
     ) {
-      const te = new Te(koma, from, to, false);
-      list.push(te);
-      const tePromote = new Te(koma, from, to, true);
+      const tePromote = new Te(koma, from, to, true, k.getKomaData(to));
       list.push(tePromote);
+      const te = new Te(koma, from, to, false, k.getKomaData(to));
+      list.push(te);
       return;
     }
     // どれにも該当しない場合は不成のみ生成
-    const te = new Te(koma, from, to, false);
+    const te = new Te(koma, from, to, false, k.getKomaData(to));
     list.push(te);
   }
   /* 打ち歩詰めになっていないかチェックする
@@ -123,10 +133,12 @@ class GenerateMoves {
       if (gyokuPosition.suji !== te.to.suji || gyokuPosition.dan !== te.to.dan + 1) return false;
     }
     // 玉頭歩だった。一手すすめて合法手があるかチェック
-    const test = k.clone();
-    test.move(te);
-    test.teban = tebanEnemy;
-    const list = this.generateLegalMoves(test);
+    k.move(te);
+    k.teban = tebanEnemy;
+    const list = this.generateLegalMoves(k);
+    // リターン前に忘れずに局面を戻す
+    k.back(te);
+    k.teban = teban;
     return list.length === 0 ? true : false;
   }
   // 与えられた局面における合法手を生成する
@@ -174,7 +186,7 @@ class GenerateMoves {
           // 空きでないと駒は打てない
           if (k.getKomaData(to) !== Koma.EMPTY) continue;
           // ようやく手の生成
-          const te = new Te(k.teban | koma, from, to, false);
+          const te = new Te(k.teban | koma, from, to, false, Koma.EMPTY);
           // 打ち歩詰めチェック
           if (this.isUtifudume(k, te)) continue;
           // 不成のみなのでaddTeメソッドを使わずに直接push
@@ -197,7 +209,7 @@ class GenerateMoves {
           // 自分の駒でふさがってないか
           if (Koma.isSelf(k.teban, k.getKomaData(to))) continue;
           // 駒を動かせる。成、不成を考慮しつつ手に追加。
-          this.addTe(list, k.teban, koma, from, to);
+          this.addTe(k, list, k.teban, koma, from, to);
         }
       }
     }
@@ -219,14 +231,14 @@ class GenerateMoves {
           // 相手の駒がある場合、１歩目ならbreak、２歩目以降なら手を生成した上でbreak
           if (Koma.isEnemy(k.teban, k.getKomaData(to))) {
             if (i !== 1) {
-              this.addTe(list, k.teban, koma, from, to);
+              this.addTe(k, list, k.teban, koma, from, to);
             }
             break;
           }
           // 盤内かつ空きだった。１歩目の場合はOneKomaMovesと被るので生成せずにcontinue
           if (i === 1) continue;
           // 盤内かつ空きであり、２歩目以降だった。手を生成して次の一歩へ
-          this.addTe(list, k.teban, koma, from, to);
+          this.addTe(k, list, k.teban, koma, from, to);
         }
       }
     }
@@ -469,6 +481,9 @@ Koma.jumpData = [
 class Kyokumen {
   constructor() {
     this.teban = SENTE;
+    // 玉の位置をプロパティとして保持する。初期値は絶対に利きの届かない盤外。
+    this.kingS = new Position(-2, -2);
+    this.kingG = new Position(-2, -2);
     this.ban = Array(11);
     for (let i = 0; i < 11; i++) {
       this.ban[i] = new Array(11).fill(0);
@@ -521,45 +536,87 @@ class Kyokumen {
   // 自身の駒を取るような手は渡されないことが保証されている
   //（このメソッド内ではその判定はしない）
   move(te) {
-    let koma = te.koma;
-    // 移動先に駒があったら持駒にする
-    const targetKoma = this.getKomaData(te.to);
-    if (targetKoma !== Koma.EMPTY) {
-      const planeKoma = targetKoma & 0x07; // 成フラグや先手後手フラグをクリア
-      if (Koma.isSente(targetKoma)) {
-        this.hand[1][planeKoma]++;
+    // 駒を取る手であればその駒を持駒にする
+    if (te.capture !== Koma.EMPTY) {
+      const koma = te.capture & 0x07; // 成フラグや先手後手フラグをクリア
+      if (Koma.isSente(te.capture)) {
+        this.hand[1][koma]++;
       } else {
-        this.hand[0][planeKoma]++;
+        this.hand[0][koma]++;
       }
     }
     // 持駒を打つ手だった場合はその持駒を減らす
     if (te.from.suji === 0) {
-      const planeKoma = koma & 0x07;
-      if (Koma.isSente(koma)) {
-        this.hand[0][planeKoma]--;
+      const koma = te.koma & 0x07;
+      if (Koma.isSente(te.koma)) {
+        this.hand[0][koma]--;
       } else {
-        this.hand[1][planeKoma]--;
+        this.hand[1][koma]--;
       }
     } else {
       //盤上の駒だった場合は元の位置をEMPTYに
       this.putKoma(te.from, Koma.EMPTY);
     }
     // 駒を移動先に進める
-    if (te.promote) koma = koma | Koma.PROMOTE;
+    const koma = te.promote ? te.koma | Koma.PROMOTE : te.koma;
     this.putKoma(te.to, koma);
+    // 玉の位置を更新
+    if (te.koma === Koma.SOU) {
+      this.kingS = te.to;
+    } else if (te.koma === Koma.GOU) {
+      this.kingG = te.to;
+    }
   }
-  // 玉の位置を得る
-  searchGyoku(teban) {
-    const targetGyoku = teban | Koma.OU;
+  // 手を一手巻き戻す（moveの逆）
+  back(te) {
+    // 取った駒を元に戻す（取ってないならEMPTYに戻す）
+    this.putKoma(te.to, te.capture);
+    // 取った駒があった場合、戻した持駒を減らす
+    if (te.capture !== Koma.EMPTY) {
+      const koma = te.capture & 0x07;
+      // 持駒を減らす
+      if (Koma.isSente(te.capture)) {
+        this.hand[1][koma]--;
+      } else {
+        this.hand[0][koma]--;
+      }
+    }
+    // 打ち駒だった場合、持駒に戻す
+    if (te.from.suji === 0) {
+      const koma = te.koma & 0x07;
+      if (Koma.isSente(te.koma)) {
+        this.hand[0][koma]++;
+      } else {
+        this.hand[1][koma]++;
+      }
+      // 打駒でなかった場合、元の位置に戻す
+    } else {
+      this.putKoma(te.from, te.koma);
+    }
+    // 玉であった場合は玉の位置情報を戻す
+    if (te.koma === Koma.SOU) {
+      this.kingS = te.from;
+    } else if (te.koma === Koma.GOU) {
+      this.kingG = te.from;
+    }
+  }
+  // 玉の位置を再探索し設定
+  researchGyoku() {
+    this.kingS.change(-2, -2);
+    this.kingG.change(-2, -2);
     for (let suji = 1; suji <= 9; suji++) {
       for (let dan = 1; dan <= 9; dan++) {
-        if (this.ban[suji][dan] === targetGyoku) {
-          return new Position(suji, dan);
+        if (this.ban[suji][dan] === Koma.SOU) {
+          this.kingS.change(suji, dan);
+        } else if (this.ban[suji][dan] === Koma.GOU) {
+          this.kingG.change(suji, dan);
         }
       }
     }
-    // 見つからずにループを終えた場合はダミーとして盤外を返す
-    return new Position(-2, -2);
+  }
+  // 玉位置を取得
+  searchGyoku(teban) {
+    return teban === SENTE ? this.kingS : this.kingG;
   }
   // 棋譜（文字列の配列へ変換済）を受け取り局面に反映させる
   readCsaKifu(csaKifu) {
@@ -687,6 +744,42 @@ class Kyokumen {
     s += '\n';
     return s;
   }
+  // 局面評価関数。現時点では駒の価値の総和に過ぎないが、
+  // 評価方法を発展させる際はここに各基準を追記していく
+  evaluate() {
+    let eva = 0;
+    // 盤上の駒の価値を全て加算
+    for (let suji = 1; suji <= 9; suji++) {
+      for (let dan = 1; dan <= 9; dan++) {
+        const koma = this.ban[suji][dan];
+        // 位置による価値調整用の係数
+        let coefficient = 1;
+        // 下段の香車に力有り
+        if (koma === Koma.SKY) {
+          coefficient = 0.91 + dan * 0.01;
+        } else if (koma === Koma.GKY) {
+          coefficient = 1.01 - dan * 0.01;
+        }
+        // 桂馬の高跳び歩の餌食
+        if (koma === Koma.SKE) {
+          coefficient = 0.991 + dan * 0.001;
+        } else if (koma === Koma.GKE) {
+          coefficient = 1.001 - dan * 0.001;
+        }
+        eva += Kyokumen.komaValue[koma] * coefficient;
+      }
+    }
+    // 持駒の価値を全て加算
+    for (let teban = 0; teban < 2; teban++) {
+      for (let koma = 1; koma < 8; koma++) {
+        const sign = teban === 0 ? 1 : -1;
+        // 歩は枚数が増える毎に価値が目減りする。一枚目（歩切れでない）は少し価値が上がる。
+        const coefficient = koma !== Koma.FU ? 1 : 1.05 - this.hand[teban][1] * 0.03;
+        eva += this.hand[teban][koma] * Kyokumen.komaValue[koma] * coefficient * sign;
+      }
+    }
+    return eva;
+  }
 }
 // ここよりファイル入出力
 // CSA形式の棋譜ファイル文字列
@@ -740,6 +833,57 @@ Kyokumen.csaKomaTbl = [
   '-UM',
   '-RY',
 ];
+// 局面評価のための駒の価値
+Kyokumen.komaValue = [
+  0,
+  100,
+  290,
+  370,
+  480,
+  580,
+  900,
+  1070,
+  10000,
+  580,
+  580,
+  580,
+  580,
+  0,
+  1200,
+  1400,
+  0,
+  100,
+  290,
+  370,
+  480,
+  580,
+  900,
+  1070,
+  10000,
+  580,
+  580,
+  580,
+  580,
+  0,
+  1200,
+  1400,
+  0,
+  -100,
+  -290,
+  -370,
+  -480,
+  -580,
+  -900,
+  -1070,
+  -10000,
+  -580,
+  -580,
+  -580,
+  -580,
+  0,
+  -1200,
+  -1400, // 後手の王～成駒～竜
+];
 // 起動時に走るMainクラス。静的。
 class Main {
   // 起動時に呼び出されるメイン関数
@@ -773,6 +917,8 @@ class Main {
       }
       k.readCsaKifu(kifu);
     }
+    // 玉位置情報をセット
+    k.researchGyoku();
     /* テスト用の表示
         // この局面における合法手も表示してみる
         console.log(k.toString());
@@ -807,10 +953,7 @@ class Main {
       }
       // 局面表示
       console.log(k.toString());
-      let nextTe =
-        k.teban === SENTE
-          ? this.player[0].getNextTe(k, legalTe)
-          : this.player[1].getNextTe(k, legalTe);
+      let nextTe = k.teban === SENTE ? this.player[0].getNextTe(k) : this.player[1].getNextTe(k);
       // 指し手を表示
       console.log(nextTe.toString());
       // 指し手が合法手に含まれない場合は反則負け
@@ -860,11 +1003,13 @@ Main.kyokumenHistory = [];
   5)デバッグ用：「p」で合法手一覧を生成
 */
 class Human {
-  getNextTe(k, legalTe) {
+  getNextTe(k) {
     // 指し手を格納する変数。投了で初期化済。
     // 正しい入力があれば合法手で書き換えられる。
     const toryoPosi = new Position(0, 0);
-    let te = new Te(0, toryoPosi, toryoPosi, false);
+    let te = new Te(0, toryoPosi, toryoPosi, false, Koma.EMPTY);
+    // まずは合法手の生成
+    const legalTe = GenerateMoves.generateLegalMoves(k);
     do {
       console.log(k.teban === SENTE ? '先手番です\n' : '後手番です\n');
       // 入力待ち
@@ -923,7 +1068,7 @@ class Human {
         // 駒を打つ手でない場合は駒を取得
         koma = k.getKomaData(from);
       }
-      te = new Te(koma, from, to, promote);
+      te = new Te(koma, from, to, promote, k.getKomaData(to));
       if (!te.contains(legalTe)) {
         console.log('合法手ではありません（再入力）');
         continue;
@@ -935,10 +1080,70 @@ class Human {
   }
 }
 class Sikou {
-  getNextTe(k, legalTe) {
-    return legalTe[Math.floor(Math.random() * legalTe.length)];
+  getNextTe(k) {
+    // 手を格納する変数。投了で初期化しておく。
+    const start = Date.now();
+    let te = new Te(0, new Position(0, 0), new Position(0, 0), false, Koma.EMPTY);
+    const eva = this.negaMax(te, k, -Sikou.INFINITE, Sikou.INFINITE, 0, Sikou.DEPTH_MAX);
+    const end = Date.now();
+    console.log(`（探索時間：${end - start} ms　評価値：${Math.floor(eva)}）`);
+    return te;
+  }
+  // 入れ物となるteを受け取り、評価が最大となるTeを格納する
+  // また、その評価値をreturnする
+  // ネガαβ法では常に指し手側を正とし、最大評価を求める
+  negaMax(te, k, alpha, beta, depth, depthMax) {
+    // 探索深さが最大に達していたらその局面で評価を行い探索終了
+    if (depth >= depthMax) {
+      return k.teban === SENTE ? k.evaluate() : -k.evaluate();
+    }
+    // まずは合法手の生成
+    let legalTe = GenerateMoves.generateLegalMoves(k);
+    // 最大となる候補手の評価値
+    let maxEva = -Sikou.INFINITE;
+    // 合法手の内の一つを一手指してみて、その評価値を取得
+    // 評価値が良ければmaxTe、maxEvaを更新
+    for (let i = 0; i < legalTe.length; i++) {
+      const tempTe = legalTe[i];
+      k.move(tempTe);
+      k.teban = k.teban === SENTE ? GOTE : SENTE;
+      // 次の局面の評価値を更に探索する
+      // nextTempTeは現時点では次の深さに渡すダミーでしかない（読み筋を表示する際は必要となる
+      let nextTempTe = new Te(0, new Position(0, 0), new Position(0, 0), false, Koma.EMPTY);
+      const tempEva = -this.negaMax(nextTempTe, k, -beta, -alpha, depth + 1, depthMax);
+      // 忘れずに局面を戻す
+      k.back(tempTe);
+      k.teban = k.teban === SENTE ? GOTE : SENTE;
+      // 評価値およびαβの更新、βカット
+      if (tempEva > maxEva) {
+        maxEva = tempEva;
+        if (maxEva > alpha) alpha = maxEva;
+        te.koma = tempTe.koma;
+        te.from = tempTe.from;
+        te.to = tempTe.to;
+        te.promote = tempTe.promote;
+        te.capture = tempTe.capture;
+        if (tempEva >= beta) break;
+      }
+    }
+    // maxEvaが-INFINITE、つまり何を指しても詰んでいる状態であった場合、
+    // teが何も更新されないままreturnしてしまうことになる。
+    // それを防ぐために先頭の指し手をteにsetする。
+    // （深さ０ではnegaMaxを呼び出す前に詰みチェックが行われているので
+    // 少なくとも一つは合法手が存在することが保証されている）
+    if (maxEva === -Sikou.INFINITE && legalTe.length !== 0) {
+      te.koma = legalTe[0].koma;
+      te.from = legalTe[0].from;
+      te.to = legalTe[0].to;
+      te.promote = legalTe[0].promote;
+      te.capture = legalTe[0].capture;
+    }
+    // 評価値を返す
+    return maxEva;
   }
 }
+Sikou.INFINITE = 99999;
+Sikou.DEPTH_MAX = 4;
 class Position {
   constructor(suji = 0, dan = 0) {
     this.suji = suji;
@@ -974,13 +1179,19 @@ class Position {
       this.dan -= num2;
     }
   }
+  // 絶対座標で設定
+  change(suji, dan) {
+    this.suji = suji;
+    this.dan = dan;
+  }
 }
 class Te {
-  constructor(koma, from, to, promote) {
+  constructor(koma, from, to, promote, capture) {
     this.koma = koma;
     this.from = from;
     this.to = to;
     this.promote = promote;
+    this.capture = capture;
   }
   equals(te) {
     return (
@@ -1000,7 +1211,7 @@ class Te {
     return false;
   }
   clone() {
-    return new Te(this.koma, this.from, this.to, this.promote);
+    return new Te(this.koma, this.from, this.to, this.promote, this.capture);
   }
   // 手の文字列化
   toString() {

@@ -5,17 +5,19 @@ class GenerateMoves {
   static removeSelfMate(k: Kyokumen, list: Te[]): Te[] {
     const removed: Te[] = [];
     list.forEach((te: Te): void => {
-      const test: Kyokumen = k.clone();
-      test.move(te);
+      k.move(te);
 
-      const gyokuPosition: Position = test.searchGyoku(k.teban);
+      const gyokuPosition: Position = k.searchGyoku(k.teban);
 
-      // 玉の周辺から相手の駒が利いていたら、手に加えずリターン
+      // 玉の周辺から相手の駒が利いていたら、手に加えずリターン（forEachを一周飛ばす
       for (let direct: number = 0; direct <= 11; direct++) {
         const pos: Position = gyokuPosition.clone();
         pos.sub(direct);
-        const koma: number = test.getKomaData(pos);
-        if (Koma.isEnemy(test.teban, koma) && Koma.canMove(koma, direct)) return;
+        const koma: number = k.getKomaData(pos);
+        if (Koma.isEnemy(k.teban, koma) && Koma.canMove(koma, direct)) {
+          k.back(te);
+          return;
+        }
       }
 
       // 玉周りの８方向からの飛び利きがあったらリターン
@@ -24,17 +26,24 @@ class GenerateMoves {
         let koma: number;
         do {
           pos.sub(direct);
-          koma = test.getKomaData(pos);
+          koma = k.getKomaData(pos);
           // 味方駒でさえぎられていたらbreak
-          if (Koma.isSelf(test.teban, koma)) break;
-          // 相手の駒で、かつその方向に移動可能な飛び駒であれば
-          // 王手がかかっていることになるのでリターン
-          if (Koma.isEnemy(test.teban, koma) && Koma.canJump(koma, direct)) return;
-          // 王手ではない相手の駒でさえぎられていたらbreak
-          if (Koma.isEnemy(test.teban, koma)) break;
+          if (Koma.isSelf(k.teban, koma)) break;
+          // 王手ではない相手の駒でさえぎられていた
+          if (Koma.isEnemy(k.teban, koma)) {
+            // かつ、その相手の駒はその方向に飛べるなら王手なのでリターン
+            if(Koma.canJump(koma, direct)) {
+              k.back(te);
+              return;
+            }
+            // 王手ではなかったのでbreakだけ
+            break;
+          }
+          // 駒がなかったのでもう一周
         } while (koma !== Koma.WALL);
       }
-
+      // リターンされずにforループを抜けた。忘れずに局面を戻しておく。
+      k.back(te);
       // 直接の利き、飛び利きのいずれも問題なかったのでリストに加える
       removed.push(te);
     });
@@ -43,7 +52,7 @@ class GenerateMoves {
 
   // 与えられた配列"list"に成、不成を考慮して
   // 生成した候補手を追加する
-  static addTe(list: Te[], teban: number, koma: number, from: Position, to: Position): void {
+  static addTe(k: Kyokumen, list: Te[], teban: number, koma: number, from: Position, to: Position): void {
     // 先手後手でほぼ同じ処理を二回書きたくないので
     // 先手後手で変化する条件部分だけ前もって変数にしておく
     let dan: number, fluctuation: number;
@@ -57,13 +66,13 @@ class GenerateMoves {
 
     // 一段目（後手なら九段目）の歩と香は成る
     if ((Koma.getKomashu(koma) === Koma.FU || Koma.getKomashu(koma) === Koma.KYO) && to.dan === dan) {
-      const te: Te = new Te(koma, from, to, true);
+      const te: Te = new Te(koma, from, to, true, k.getKomaData(to));
       list.push(te);
       return;
     }
     // 二段目以上（後手なら八段目以下）の桂馬は成る
     if (Koma.getKomashu(koma) === Koma.KEI && to.dan * fluctuation <= (dan + fluctuation) * fluctuation) {
-      const te: Te = new Te(koma, from, to, true);
+      const te: Te = new Te(koma, from, to, true, k.getKomaData(to));
       list.push(te);
       return;
     }
@@ -71,14 +80,14 @@ class GenerateMoves {
     // 成と不成の両方を生成して追加
     if ((to.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation ||
       from.dan * fluctuation <= (dan + fluctuation * 2) * fluctuation) && Koma.canPromote(koma)) {
-      const te: Te = new Te(koma, from, to, false);
-      list.push(te);
-      const tePromote: Te = new Te(koma, from, to, true);
+      const tePromote: Te = new Te(koma, from, to, true, k.getKomaData(to));
       list.push(tePromote);
+      const te: Te = new Te(koma, from, to, false, k.getKomaData(to));
+      list.push(te);
       return;
     }
     // どれにも該当しない場合は不成のみ生成
-    const te: Te = new Te(koma, from, to, false);
+    const te: Te = new Te(koma, from, to, false, k.getKomaData(to));
     list.push(te);
   }
 
@@ -110,10 +119,12 @@ class GenerateMoves {
       if (gyokuPosition.suji !== te.to.suji || gyokuPosition.dan !== te.to.dan + 1) return false;
     }
     // 玉頭歩だった。一手すすめて合法手があるかチェック
-    const test: Kyokumen = k.clone();
-    test.move(te);
-    test.teban = tebanEnemy;
-    const list: Te[] = this.generateLegalMoves(test);
+    k.move(te);
+    k.teban = tebanEnemy;
+    const list: Te[] = this.generateLegalMoves(k);
+    // リターン前に忘れずに局面を戻す
+    k.back(te);
+    k.teban = teban;
     return list.length === 0 ? true : false;
   }
 
@@ -169,7 +180,7 @@ class GenerateMoves {
           // 空きでないと駒は打てない
           if (k.getKomaData(to) !== Koma.EMPTY) continue;
           // ようやく手の生成
-          const te: Te = new Te(k.teban | koma, from, to, false);
+          const te: Te = new Te(k.teban | koma, from, to, false, Koma.EMPTY);
           // 打ち歩詰めチェック
           if (this.isUtifudume(k, te)) continue;
 
@@ -195,7 +206,7 @@ class GenerateMoves {
           // 自分の駒でふさがってないか
           if (Koma.isSelf(k.teban, k.getKomaData(to))) continue;
           // 駒を動かせる。成、不成を考慮しつつ手に追加。
-          this.addTe(list, k.teban, koma, from, to);
+          this.addTe(k, list, k.teban, koma, from, to);
         }
       }
     }
@@ -218,14 +229,14 @@ class GenerateMoves {
           // 相手の駒がある場合、１歩目ならbreak、２歩目以降なら手を生成した上でbreak
           if (Koma.isEnemy(k.teban, k.getKomaData(to))) {
             if(i !== 1) {
-              this.addTe(list, k.teban, koma, from, to);
+              this.addTe(k, list, k.teban, koma, from, to);
             }
             break;
           }
           // 盤内かつ空きだった。１歩目の場合はOneKomaMovesと被るので生成せずにcontinue
           if (i === 1) continue;
           // 盤内かつ空きであり、２歩目以降だった。手を生成して次の一歩へ
-          this.addTe(list, k.teban, koma, from, to);
+          this.addTe(k, list, k.teban, koma, from, to);
         }
       }
     }

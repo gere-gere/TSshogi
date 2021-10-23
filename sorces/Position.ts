@@ -37,4 +37,9 @@ class Position {
     }
   }
 
+  // 絶対座標で設定
+  change(suji: number, dan: number) {
+    this.suji = suji;
+    this.dan = dan;
+  }
 }
