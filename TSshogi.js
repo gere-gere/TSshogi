@@ -909,12 +909,8 @@ class Main {
     } else {
       const filename = process.argv[2];
       let kifu;
-      try {
-        const kifuStr = fs.readFileSync('../kifu' + filename, 'utf-8');
-        kifu = kifuStr.split('\n');
-      } catch {
-        throw '棋譜ファイルを読み込めません。ファイル名を確認してください。\n';
-      }
+      const kifuStr = fs.readFileSync('./kifu/' + filename, 'utf-8');
+      kifu = kifuStr.split('\n');
       k.readCsaKifu(kifu);
     }
     // 玉位置情報をセット
