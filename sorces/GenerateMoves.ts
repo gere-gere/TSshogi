@@ -170,7 +170,7 @@ class GenerateMoves {
           // 駒が桂の場合は二段目より上（後手は八段目より下）に打てない
           if (koma === 3) {
             if (k.teban === SENTE && dan <= 2) continue;
-            if (k.teban === GOTE && dan <= 8) continue;
+            if (k.teban === GOTE && dan >= 8) continue;
           }
 
           // 位置の生成
