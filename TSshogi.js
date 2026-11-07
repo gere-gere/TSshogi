@@ -16,47 +16,51 @@ class GenerateMoves {
       つまり自殺手や王手放置となっていないかをチェックし、取り除く*/
   static removeSelfMate(k, list) {
     const removed = [];
-    list.forEach((te) => {
+    // Kyokumen.moveは手番を変更しないので、手を指す側の手番はここで固定できる
+    const teban = k.teban;
+    for (let i = 0; i < list.length; i++) {
+      const te = list[i];
       k.move(te);
-      const gyokuPosition = k.searchGyoku(k.teban);
-      // 玉の周辺から相手の駒が利いていたら、手に加えずリターン（forEachを一周飛ばす
-      for (let direct = 0; direct <= 11; direct++) {
-        const pos = gyokuPosition.clone();
-        pos.sub(direct);
-        const koma = k.getKomaData(pos);
-        if (Koma.isEnemy(k.teban, koma) && Koma.canMove(koma, direct)) {
-          k.back(te);
-          return;
-        }
-      }
-      // 玉周りの８方向からの飛び利きがあったらリターン
-      for (let direct = 0; direct <= 7; direct++) {
-        const pos = gyokuPosition.clone();
-        let koma;
-        do {
-          pos.sub(direct);
-          koma = k.getKomaData(pos);
-          // 味方駒でさえぎられていたらbreak
-          if (Koma.isSelf(k.teban, koma)) break;
-          // 王手ではない相手の駒でさえぎられていた
-          if (Koma.isEnemy(k.teban, koma)) {
-            // かつ、その相手の駒はその方向に飛べるなら王手なのでリターン
-            if (Koma.canJump(koma, direct)) {
-              k.back(te);
-              return;
-            }
-            // 王手ではなかったのでbreakだけ
-            break;
-          }
-          // 駒がなかったのでもう一周
-        } while (koma !== Koma.WALL);
-      }
-      // リターンされずにforループを抜けた。忘れずに局面を戻しておく。
+      const attacked = this.isGyokuAttacked(k, teban);
+      // 忘れずに局面を戻しておく
       k.back(te);
       // 直接の利き、飛び利きのいずれも問題なかったのでリストに加える
-      removed.push(te);
-    });
+      if (!attacked) removed.push(te);
+    }
     return removed;
+  }
+  // tebanの側の玉に、相手の駒の利き（王手）があるかを判定する
+  // Positionを生成せず、筋と段を数値のまま扱うことで軽量化している
+  static isGyokuAttacked(k, teban) {
+    const gyokuPosition = k.searchGyoku(teban);
+    const gyokuSuji = gyokuPosition.suji;
+    const gyokuDan = gyokuPosition.dan;
+    // 玉の周辺（桂馬飛びを含む）から相手の駒が利いていたら王手
+    for (let direct = 0; direct <= 11; direct++) {
+      const koma = k.getKoma(gyokuSuji - Koma.diffSuji[direct], gyokuDan - Koma.diffDan[direct]);
+      if (Koma.isEnemy(teban, koma) && Koma.canMove(koma, direct)) return true;
+    }
+    // 玉周りの８方向からの飛び利きがあったら王手
+    for (let direct = 0; direct <= 7; direct++) {
+      const diffSuji = Koma.diffSuji[direct];
+      const diffDan = Koma.diffDan[direct];
+      let suji = gyokuSuji - diffSuji;
+      let dan = gyokuDan - diffDan;
+      // 盤内にいる間、玉から離れる方向に一マスずつ調べる
+      while (suji >= 1 && suji <= 9 && dan >= 1 && dan <= 9) {
+        const koma = k.ban[suji][dan];
+        if (koma !== Koma.EMPTY) {
+          // 相手の駒でさえぎられていて、その駒がその方向に飛べるなら王手
+          if (Koma.isEnemy(teban, koma) && Koma.canJump(koma, direct)) return true;
+          // 味方駒、または王手ではない相手の駒でさえぎられていたのでこの方向は問題なし
+          break;
+        }
+        // 駒がなかったので一マス進める
+        suji -= diffSuji;
+        dan -= diffDan;
+      }
+    }
+    return false;
   }
   // 与えられた配列"list"に成、不成を考慮して
   // 生成した候補手を追加する
@@ -141,47 +145,44 @@ class GenerateMoves {
     k.teban = teban;
     return list.length === 0 ? true : false;
   }
+  // 盤上の手番側の駒を動かす手を生成し、listに追加する
+  // capturesOnlyがtrueの場合は、駒を取る手だけを生成する
+  static generateBoardMoves(list, k, capturesOnly) {
+    for (let suji = 1; suji <= 9; suji++) {
+      const column = k.ban[suji];
+      for (let dan = 1; dan <= 9; dan++) {
+        const koma = column[dan];
+        // 駒が手番側の駒か確認し、手番側の駒であれば動かしてみる
+        // （Positionは手番側の駒のマスでだけ生成する）
+        if (Koma.isSelf(k.teban, koma)) {
+          const from = new Position(suji, dan);
+          // 直接動く手を生成
+          this.generateOneKomaMoves(list, k, koma, from, capturesOnly);
+          // 飛び駒の手を生成
+          this.generateOneKomaJumps(list, k, koma, from, capturesOnly);
+        }
+      }
+    }
+  }
   // 駒を取る手だけを生成する（静止探索用）
   // 持駒を打つ手は駒を取らないので生成しない。打ち歩詰めのチェックも不要となり、
   // 全合法手を生成するより大幅に軽い。
   static generateCaptureMoves(k) {
     const list = [];
-    for (let suji = 1; suji <= 9; suji++) {
-      for (let dan = 1; dan <= 9; dan++) {
-        const from = new Position(suji, dan);
-        const koma = k.getKomaData(from);
-        if (Koma.isSelf(k.teban, koma)) {
-          this.generateOneKomaMoves(list, k, koma, from);
-          this.generateOneKomaJumps(list, k, koma, from);
-        }
-      }
-    }
-    // 取る手だけに絞り込み、自殺手や王手放置を除外する
-    return this.removeSelfMate(
-      k,
-      list.filter((te) => te.capture !== Koma.EMPTY)
-    );
+    this.generateBoardMoves(list, k, true);
+    // 自殺手や王手放置を除外する
+    return this.removeSelfMate(k, list);
   }
   // 与えられた局面における合法手を生成する
   static generateLegalMoves(k) {
     const list = [];
     // 盤上の駒を動かす手を生成
-    for (let suji = 1; suji <= 9; suji++) {
-      for (let dan = 1; dan <= 9; dan++) {
-        const from = new Position(suji, dan);
-        const koma = k.getKomaData(from);
-        // 駒が手番側の駒か確認し、手番側の駒であれば動かしてみる
-        if (Koma.isSelf(k.teban, koma)) {
-          // 直接動く手を生成
-          this.generateOneKomaMoves(list, k, koma, from);
-          // 飛び駒の手を生成
-          this.generateOneKomaJumps(list, k, koma, from);
-        }
-      }
-    }
+    this.generateBoardMoves(list, k, false);
     // 持駒を打つ手を生成
     // 手番側の持駒を参照する変数を用意
     const hand = k.teban === 0x10 ? k.hand[0] : k.hand[1];
+    // 駒を打つ手の移動元。全ての打つ手で共有する（書き換えは行わない）
+    const dropFrom = new Position(0, 0);
     // 持駒を歩から飛まで順にチェックする
     for (let koma = Koma.FU; koma <= Koma.HI; koma++) {
       // 該当する駒が持駒になければcontinue
@@ -190,6 +191,7 @@ class GenerateMoves {
       for (let suji = 1; suji <= 9; suji++) {
         // 駒が歩の場合は二歩チェック
         if (koma === Koma.FU && this.isNifu(k, suji)) continue;
+        const column = k.ban[suji];
         for (let dan = 1; dan <= 9; dan++) {
           // 駒が歩、または香の場合は一段目（後手は九段目）に打てない
           if (koma === Koma.FU || koma === Koma.KYO) {
@@ -201,13 +203,12 @@ class GenerateMoves {
             if (k.teban === SENTE && dan <= 2) continue;
             if (k.teban === GOTE && dan >= 8) continue;
           }
+          // 空きでないと駒は打てない（Positionの生成より前に判定する）
+          if (column[dan] !== Koma.EMPTY) continue;
           // 位置の生成
-          const from = new Position(0, 0);
           const to = new Position(suji, dan);
-          // 空きでないと駒は打てない
-          if (k.getKomaData(to) !== Koma.EMPTY) continue;
           // ようやく手の生成
-          const te = new Te(k.teban | koma, from, to, false, Koma.EMPTY);
+          const te = new Te(k.teban | koma, dropFrom, to, false, Koma.EMPTY);
           // 打ち歩詰めチェック
           if (this.isUtifudume(k, te)) continue;
           // 不成のみなのでaddTeメソッドを使わずに直接push
@@ -221,53 +222,70 @@ class GenerateMoves {
     return this.removeSelfMate(k, list);
   }
   // 盤上の特定の駒一つ分についての手を生成する
-  static generateOneKomaMoves(list, k, koma, from) {
+  // capturesOnlyがtrueの場合は、駒を取る手だけを生成する
+  static generateOneKomaMoves(list, k, koma, from, capturesOnly = false) {
     for (let direct = 0; direct <= 11; direct++) {
       if (Koma.canMove(koma, direct)) {
-        const to = from.makeMovedPosition(direct);
+        // 移動先の筋と段。Positionは手を生成する時だけ作る
+        const suji = from.suji + Koma.diffSuji[direct];
+        const dan = from.dan + Koma.diffDan[direct];
         // 移動先は盤内か
-        if (to.suji >= 1 && to.suji <= 9 && to.dan >= 1 && to.dan <= 9) {
+        if (suji >= 1 && suji <= 9 && dan >= 1 && dan <= 9) {
+          const target = k.ban[suji][dan];
           // 自分の駒でふさがってないか
-          if (Koma.isSelf(k.teban, k.getKomaData(to))) continue;
+          if (Koma.isSelf(k.teban, target)) continue;
+          // 駒を取る手だけが必要な場合、空きマスへの移動は不要
+          if (capturesOnly && target === Koma.EMPTY) continue;
           // 駒を動かせる。成、不成を考慮しつつ手に追加。
-          this.addTe(k, list, k.teban, koma, from, to);
+          this.addTe(k, list, k.teban, koma, from, new Position(suji, dan));
         }
       }
     }
   }
   // 盤上の特定の駒一つ分の動き、飛び駒用
-  static generateOneKomaJumps(list, k, koma, from) {
+  // capturesOnlyがtrueの場合は、駒を取る手だけを生成する
+  static generateOneKomaJumps(list, k, koma, from, capturesOnly = false) {
     for (let direct = 0; direct <= 7; direct++) {
       if (Koma.canJump(koma, direct)) {
-        // 飛び方向に一マスずつ動かしていく
+        const diffSuji = Koma.diffSuji[direct];
+        const diffDan = Koma.diffDan[direct];
+        // 飛び方向に一マスずつ動かしていく。
+        // 毎回元の位置から数え直さず、前回のマスから一歩進める。
+        let suji = from.suji + diffSuji;
+        let dan = from.dan + diffDan;
         for (let i = 1; i < 9; i++) {
-          let to = from.clone();
-          for (let j = 0; j < i; j++) {
-            to.add(direct);
-          }
           // 盤の範囲を超えていればbreak
-          if (to.suji < 1 || to.suji > 9 || to.dan < 1 || to.dan > 9) break;
+          if (suji < 1 || suji > 9 || dan < 1 || dan > 9) break;
+          const target = k.ban[suji][dan];
           // 自分の駒でふさがっている場合もbreak
-          if (Koma.isSelf(k.teban, k.getKomaData(to))) break;
+          if (Koma.isSelf(k.teban, target)) break;
           // 相手の駒がある場合、１歩目ならbreak、２歩目以降なら手を生成した上でbreak
-          if (Koma.isEnemy(k.teban, k.getKomaData(to))) {
+          if (Koma.isEnemy(k.teban, target)) {
             if (i !== 1) {
-              this.addTe(k, list, k.teban, koma, from, to);
+              this.addTe(k, list, k.teban, koma, from, new Position(suji, dan));
             }
             break;
           }
-          // 盤内かつ空きだった。１歩目の場合はOneKomaMovesと被るので生成せずにcontinue
-          if (i === 1) continue;
-          // 盤内かつ空きであり、２歩目以降だった。手を生成して次の一歩へ
-          this.addTe(k, list, k.teban, koma, from, to);
+          // 盤内かつ空きだった。
+          // １歩目の場合はOneKomaMovesと被るので生成しない。
+          // 駒を取る手だけが必要な場合も空きマスへの移動は生成しない。
+          // それ以外（２歩目以降）は手を生成する。
+          if (i !== 1 && !capturesOnly) {
+            this.addTe(k, list, k.teban, koma, from, new Position(suji, dan));
+          }
+          // 次の一歩へ
+          suji += diffSuji;
+          dan += diffDan;
         }
       }
     }
   }
   // 二歩チェック
   static isNifu(k, suji) {
+    const fu = k.teban | Koma.FU;
+    const column = k.ban[suji];
     for (let dan = 1; dan <= 9; dan++) {
-      if (k.getKomaData({ suji, dan }) === (k.teban | Koma.FU)) return true;
+      if (column[dan] === fu) return true;
     }
     return false;
   }
@@ -546,8 +564,12 @@ class Kyokumen {
   }
   // 盤上の特定地点の駒情報の取得
   getKomaData(p) {
-    if (p.suji < 1 || p.suji > 9 || p.dan < 1 || p.dan > 9) return Koma.WALL;
-    return this.ban[p.suji][p.dan];
+    return this.getKoma(p.suji, p.dan);
+  }
+  // 盤上の特定地点の駒情報の取得（筋と段を数値で渡す版。Positionの生成が不要）
+  getKoma(suji, dan) {
+    if (suji < 1 || suji > 9 || dan < 1 || dan > 9) return Koma.WALL;
+    return this.ban[suji][dan];
   }
   // 指定位置に駒を置く
   putKoma(p, koma) {
@@ -1216,7 +1238,8 @@ class Position {
   // 位置を動かす
   add(num1, num2) {
     if (num2 === undefined) {
-      this.add(Koma.diffSuji[num1], Koma.diffDan[num1]);
+      this.suji += Koma.diffSuji[num1];
+      this.dan += Koma.diffDan[num1];
     } else {
       this.suji += num1;
       this.dan += num2;
@@ -1225,7 +1248,8 @@ class Position {
   // 逆方向への動き
   sub(num1, num2) {
     if (num2 === undefined) {
-      this.sub(Koma.diffSuji[num1], Koma.diffDan[num1]);
+      this.suji -= Koma.diffSuji[num1];
+      this.dan -= Koma.diffDan[num1];
     } else {
       this.suji -= num1;
       this.dan -= num2;

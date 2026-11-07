@@ -54,8 +54,13 @@ class Kyokumen {
 
   // 盤上の特定地点の駒情報の取得
   getKomaData(p: Position): number {
-    if (p.suji < 1 || p.suji > 9 || p.dan < 1 || p.dan > 9) return Koma.WALL;
-    return this.ban[p.suji][p.dan];
+    return this.getKoma(p.suji, p.dan);
+  }
+
+  // 盤上の特定地点の駒情報の取得（筋と段を数値で渡す版。Positionの生成が不要）
+  getKoma(suji: number, dan: number): number {
+    if (suji < 1 || suji > 9 || dan < 1 || dan > 9) return Koma.WALL;
+    return this.ban[suji][dan];
   }
 
   // 指定位置に駒を置く

@@ -20,7 +20,8 @@ class Position {
   // 位置を動かす
   add(num1: number, num2?: number): void {
     if (num2 === undefined) {
-      this.add(Koma.diffSuji[num1], Koma.diffDan[num1]);
+      this.suji += Koma.diffSuji[num1];
+      this.dan += Koma.diffDan[num1];
     } else {
       this.suji += num1;
       this.dan += num2;
@@ -30,7 +31,8 @@ class Position {
   // 逆方向への動き
   sub(num1: number, num2?: number): void {
     if (num2 === undefined) {
-      this.sub(Koma.diffSuji[num1], Koma.diffDan[num1]);
+      this.suji -= Koma.diffSuji[num1];
+      this.dan -= Koma.diffDan[num1];
     } else {
       this.suji -= num1;
       this.dan -= num2;
