@@ -128,6 +128,25 @@ class GenerateMoves {
     return list.length === 0 ? true : false;
   }
 
+  // 駒を取る手だけを生成する（静止探索用）
+  // 持駒を打つ手は駒を取らないので生成しない。打ち歩詰めのチェックも不要となり、
+  // 全合法手を生成するより大幅に軽い。
+  static generateCaptureMoves(k: Kyokumen): Te[] {
+    const list: Te[] = [];
+    for (let suji: number = 1; suji <= 9; suji++) {
+      for (let dan: number = 1; dan <= 9; dan++) {
+        const from: Position = new Position(suji, dan);
+        const koma: number = k.getKomaData(from);
+        if (Koma.isSelf(k.teban, koma)) {
+          this.generateOneKomaMoves(list, k, koma, from);
+          this.generateOneKomaJumps(list, k, koma, from);
+        }
+      }
+    }
+    // 取る手だけに絞り込み、自殺手や王手放置を除外する
+    return this.removeSelfMate(k, list.filter((te: Te): boolean => te.capture !== Koma.EMPTY));
+  }
+
   // 与えられた局面における合法手を生成する
   static generateLegalMoves(k: Kyokumen): Te[] {
     const list: Te[] = [];

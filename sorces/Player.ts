@@ -95,6 +95,8 @@ class Human implements Player {
 class Sikou implements Player {
   static readonly INFINITE = 99999;
   static readonly DEPTH_MAX = 4;
+  // 静止探索で、探索限界からさらに読み進める最大の深さ
+  static readonly QS_DEPTH_MAX = 6;
 
   getNextTe(k: Kyokumen): Te {
     // 手を格納する変数。投了で初期化しておく。
@@ -110,13 +112,20 @@ class Sikou implements Player {
   // また、その評価値をreturnする
   // ネガαβ法では常に指し手側を正とし、最大評価を求める
   negaMax(te: Te, k: Kyokumen, alpha: number, beta: number, depth: number, depthMax: number): number {
-    // 探索深さが最大に達していたらその局面で評価を行い探索終了
+    // 探索深さが最大に達していたら、駒の取り合いが落ち着くまで
+    // 静止探索で読み進めた上で評価を行い、探索終了
     if(depth >= depthMax) {
-      return k.teban === SENTE ? k.evaluate() : -k.evaluate();
+      return this.quiescence(k, alpha, beta, 0);
     }
 
     // まずは合法手の生成
     let legalTe: Te[] = GenerateMoves.generateLegalMoves(k);
+
+    // 合法手がない＝この局面の手番側は詰まされている。
+    // 早く詰ませる（遅く詰まされる）ほど評価が高くなるよう、深さを加味する
+    if(legalTe.length === 0) {
+      return -(Sikou.INFINITE - depth);
+    }
 
     // 最大となる候補手の評価値
     let maxEva: number = -Sikou.INFINITE;
@@ -146,6 +155,7 @@ class Sikou implements Player {
         if(tempEva >= beta) break;
       }
     }
+    // （詰みスコアに深さを加味しているため通常は発生しないが、念のための安全策）
     // maxEvaが-INFINITE、つまり何を指しても詰んでいる状態であった場合、
     // teが何も更新されないままreturnしてしまうことになる。
     // それを防ぐために先頭の指し手をteにsetする。
@@ -160,6 +170,34 @@ class Sikou implements Player {
     }
 
     // 評価値を返す
+    return maxEva;
+  }
+
+  // 静止探索。探索深さの限界に達した局面で、駒の取り合いが落ち着くまで
+  // 「駒を取る手」だけを読み進めてから評価する（水平線効果の緩和）。
+  // 取り合いに加わらない選択（stand pat）も許し、現局面の評価値を下限として扱う。
+  // 現状は詰みの検出や王手への対応は行わない。
+  quiescence(k: Kyokumen, alpha: number, beta: number, qDepth: number): number {
+    const standPat: number = k.teban === SENTE ? k.evaluate() : -k.evaluate();
+    if(qDepth >= Sikou.QS_DEPTH_MAX) return standPat;
+    if(standPat >= beta) return standPat;
+    if(standPat > alpha) alpha = standPat;
+
+    const captures: Te[] = GenerateMoves.generateCaptureMoves(k);
+    let maxEva: number = standPat;
+    for(let i: number = 0; i < captures.length; i++) {
+      const tempTe: Te = captures[i];
+      k.move(tempTe);
+      k.teban = k.teban === SENTE ? GOTE : SENTE;
+      const tempEva: number = -this.quiescence(k, -beta, -alpha, qDepth + 1);
+      k.back(tempTe);
+      k.teban = k.teban === SENTE ? GOTE : SENTE;
+      if(tempEva > maxEva) {
+        maxEva = tempEva;
+        if(maxEva > alpha) alpha = maxEva;
+        if(tempEva >= beta) break;
+      }
+    }
     return maxEva;
   }
 
