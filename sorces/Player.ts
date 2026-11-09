@@ -100,27 +100,56 @@ interface SikouConfig {
   josekiMaxTe: number;
   // 詰将棋ルーチンで読む手数の上限。0なら詰将棋ルーチンを使わない（未実装）
   tsumeDepth: number;
+  // 置換表のエントリ数を2の累乗で指定する（20なら約100万エントリ、約20MB）。
+  // 0以下なら置換表を使わない。置換表は対局を通して保持される。
+  ttBits: number;
 }
 
 class Sikou implements Player {
   static readonly INFINITE = 99999;
   // 静止探索で、探索限界からさらに読み進める最大の深さ
   static readonly QS_DEPTH_MAX = 6;
+  // この値以上（以下）の評価値は、詰みを表すものとして扱う
+  static readonly MATE_BOUND = Sikou.INFINITE - 100;
   // 省略された項目に使われる既定値
   static readonly DEFAULT_CONFIG: SikouConfig = {
     depth: 4,
     josekiMaxTe: 0,
-    tsumeDepth: 0
+    tsumeDepth: 0,
+    ttBits: 20
   };
 
   private readonly config: SikouConfig;
+  // 置換表。使わない設定の場合はnull
+  private readonly tt: TranspositionTable | null;
 
   // 一部の項目だけを指定してもよい。省略した項目はDEFAULT_CONFIGの値となる。
   constructor(config: Partial<SikouConfig> = {}) {
     this.config = { ...Sikou.DEFAULT_CONFIG, ...config };
+    this.tt = this.config.ttBits > 0 ? new TranspositionTable(this.config.ttBits) : null;
+  }
+
+  // 詰みを表す評価値は「根からの深さ」を含んでいるため、
+  // 置換表には「その局面からの詰みまでの手数」の形に直して保存する。
+  // （同じ局面でも、根からの深さが違えば評価値の見え方が変わるため）
+  static toTTScore(score: number, ply: number): number {
+    if(score >= Sikou.MATE_BOUND) return score + ply;
+    if(score <= -Sikou.MATE_BOUND) return score - ply;
+    return score;
+  }
+
+  // 置換表から取り出した評価値を、現在の根からの深さに合わせた値に直す
+  static fromTTScore(score: number, ply: number): number {
+    if(score >= Sikou.MATE_BOUND) return score - ply;
+    if(score <= -Sikou.MATE_BOUND) return score + ply;
+    return score;
   }
 
   getNextTe(k: Kyokumen): Te {
+    // 局面ハッシュを念のため計算し直す。（盤面を直接書き換えた場合などに
+    // 差分更新の結果とずれていても、探索の起点を正しくするため）
+    k.initHash();
+    if(this.tt !== null) this.tt.newGeneration();
     // 手を格納する変数。投了で初期化しておく。
     const start: number = Date.now();
     let te: Te = new Te(0, new Position(0, 0), new Position(0, 0), false, Koma.EMPTY);
@@ -140,6 +169,31 @@ class Sikou implements Player {
       return this.quiescence(k, alpha, beta, 0);
     }
 
+    // この局面からの残りの探索深さ
+    const remaining: number = depthMax - depth;
+    // 置換表を参照する。見つかったエントリの最善手は、手の並べ替えで先頭にする。
+    const tt: TranspositionTable | null = this.tt;
+    let hi: number = 0;
+    let lo: number = 0;
+    let ttMove: number = 0;
+    if(tt !== null) {
+      hi = k.keyHi();
+      lo = k.keyLo();
+      if(tt.probe(hi, lo)) {
+        ttMove = tt.hitMove;
+        // 十分深く読んだ結果であれば、探索せずにその評価値を使う。
+        // ただし根（depth 0）では、指す手を確定させる必要があるため使わない。
+        if(depth > 0 && tt.hitDepth >= remaining) {
+          const score: number = Sikou.fromTTScore(tt.hitScore, depth);
+          if(tt.hitFlag === TranspositionTable.EXACT) return score;
+          if(tt.hitFlag === TranspositionTable.LOWER && score >= beta) return score;
+          if(tt.hitFlag === TranspositionTable.UPPER && score <= alpha) return score;
+        }
+      }
+    }
+    // 探索前のαを保存しておく（置換表に保存する評価値の種類の判定に使う）
+    const alphaOrig: number = alpha;
+
     // まずは合法手の生成
     let legalTe: Te[] = GenerateMoves.generateLegalMoves(k);
 
@@ -150,7 +204,7 @@ class Sikou implements Player {
     }
 
     // 良さそうな手から先に読むことで、βカットが起こりやすくなる
-    Sikou.orderMoves(legalTe);
+    Sikou.orderMoves(legalTe, ttMove);
 
     // 最大となる候補手の評価値
     let maxEva: number = -Sikou.INFINITE;
@@ -194,6 +248,25 @@ class Sikou implements Player {
       te.capture = legalTe[0].capture;
     }
 
+    // 置換表に結果を保存する。
+    // 評価値の種類は、探索前のαとβに対する結果の位置で決まる。
+    //   α以下：どの手もαを超えられなかった（実際の評価値はこれ以下）
+    //   β以上：βカットが起きた（実際の評価値はこれ以上）
+    //   その間：正確な評価値
+    // 上限の場合は最善手が定まっていないため、手は保存しない。
+    if(tt !== null) {
+      let flag: number;
+      if(maxEva <= alphaOrig) {
+        flag = TranspositionTable.UPPER;
+      } else if(maxEva >= beta) {
+        flag = TranspositionTable.LOWER;
+      } else {
+        flag = TranspositionTable.EXACT;
+      }
+      const move: number = flag === TranspositionTable.UPPER ? 0 : TranspositionTable.packMove(te);
+      tt.store(hi, lo, remaining, Sikou.toTTScore(maxEva, depth), flag, move);
+    }
+
     // 評価値を返す
     return maxEva;
   }
@@ -203,8 +276,13 @@ class Sikou implements Player {
   //   また取る側の駒の価値が低いほど優先する（MVV-LVA）
   // ・成る手は、成ることによる駒の価値の増加分だけ優先する
   // ・それ以外（駒を取らない、成らない手）は同順位
-  static scoreMove(te: Te): number {
+  // ttMoveは置換表に保存されていた最善手（packMoveで圧縮したもの、無ければ0）。
+  // 一致する手は、他のどの手よりも優先する。
+  static scoreMove(te: Te, ttMove: number): number {
     let score: number = 0;
+    if(ttMove !== 0 && TranspositionTable.packMove(te) === ttMove) {
+      score += 10000000;
+    }
     if(te.capture !== Koma.EMPTY) {
       const victim: number = Math.abs(Kyokumen.komaValue[te.capture]);
       const attacker: number = Math.abs(Kyokumen.komaValue[te.koma]);
@@ -221,11 +299,11 @@ class Sikou implements Player {
   // 与えられた手のリストを、優先度の高い順にその場で並べ替える。
   // 優先度が同じ手は元の順序を保つ（安定）。
   // リストは短く、同順位の手が多いため、挿入ソートを用いる。
-  static orderMoves(list: Te[]): void {
+  static orderMoves(list: Te[], ttMove: number = 0): void {
     const n: number = list.length;
     const scores: number[] = new Array(n);
     for(let i: number = 0; i < n; i++) {
-      scores[i] = Sikou.scoreMove(list[i]);
+      scores[i] = Sikou.scoreMove(list[i], ttMove);
     }
     for(let i: number = 1; i < n; i++) {
       const te: Te = list[i];

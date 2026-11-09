@@ -5,6 +5,11 @@ class Kyokumen {
   // 玉の位置をプロパティとして保持する。初期値は絶対に利きの届かない盤外。
   kingS: Position = new Position(-2, -2);
   kingG: Position = new Position(-2, -2);
+  // 局面ハッシュ（盤上の駒と持駒の分。手番は含まず、keyHi/keyLoで加味する）。
+  // 64bitを32bitずつに分けて保持する。putKomaやmove/backで差分更新される。
+  // 盤面や持駒を直接書き換えた場合は、initHashで再計算すること。
+  hashHi: number = 0;
+  hashLo: number = 0;
 
   constructor() {
     this.ban = Array(11);
@@ -28,7 +33,45 @@ class Kyokumen {
     k.hand[0] = this.hand[0].slice(0);
     k.hand[1] = this.hand[1].slice(0);
     k.teban = this.teban;
+    k.hashHi = this.hashHi;
+    k.hashLo = this.hashLo;
     return k;
+  }
+
+  // 盤上の駒と持駒から、局面ハッシュを一から計算し直す。
+  // 初期配置の設定後や棋譜の読み込み後など、盤面や持駒を直接書き換えた場合に呼ぶ。
+  initHash(): void {
+    let hi: number = 0;
+    let lo: number = 0;
+    for (let suji = 1; suji <= 9; suji++) {
+      for (let dan = 1; dan <= 9; dan++) {
+        const koma: number = this.ban[suji][dan];
+        if (koma === Koma.EMPTY) continue;
+        const idx: number = koma * Zobrist.SQUARES + (suji - 1) * 9 + (dan - 1);
+        hi ^= Zobrist.boardHi[idx];
+        lo ^= Zobrist.boardLo[idx];
+      }
+    }
+    for (let side = 0; side < 2; side++) {
+      for (let koma = Koma.FU; koma <= Koma.HI; koma++) {
+        const idx: number = (side * 8 + koma) * Zobrist.HAND_MAX + this.hand[side][koma];
+        hi ^= Zobrist.handHi[idx];
+        lo ^= Zobrist.handLo[idx];
+      }
+    }
+    this.hashHi = hi;
+    this.hashLo = lo;
+  }
+
+  // 手番を加味した局面のキー（上位32bit）。置換表や千日手判定ではこちらを使う。
+  // 手番は外部から直接書き換えられるため、ここで加味する。
+  keyHi(): number {
+    return this.teban === GOTE ? this.hashHi ^ Zobrist.tebanHi : this.hashHi;
+  }
+
+  // 手番を加味した局面のキー（下位32bit）
+  keyLo(): number {
+    return this.teban === GOTE ? this.hashLo ^ Zobrist.tebanLo : this.hashLo;
   }
 
   equals(k: Kyokumen): boolean {
@@ -63,9 +106,33 @@ class Kyokumen {
     return this.ban[suji][dan];
   }
 
-  // 指定位置に駒を置く
+  // 指定位置に駒を置く（局面ハッシュも差分更新する）
   putKoma(p: Position, koma: number): void {
+    const sq: number = (p.suji - 1) * 9 + (p.dan - 1);
+    const old: number = this.ban[p.suji][p.dan];
+    if (old !== Koma.EMPTY) {
+      this.hashHi ^= Zobrist.boardHi[old * Zobrist.SQUARES + sq];
+      this.hashLo ^= Zobrist.boardLo[old * Zobrist.SQUARES + sq];
+    }
+    if (koma !== Koma.EMPTY) {
+      this.hashHi ^= Zobrist.boardHi[koma * Zobrist.SQUARES + sq];
+      this.hashLo ^= Zobrist.boardLo[koma * Zobrist.SQUARES + sq];
+    }
     this.ban[p.suji][p.dan] = koma;
+  }
+
+  // 持駒の枚数をdelta枚増減する（局面ハッシュも差分更新する）。
+  // sideは0が先手、1が後手。
+  changeHand(side: number, koma: number, delta: number): void {
+    const old: number = this.hand[side][koma];
+    const now: number = old + delta;
+    this.hand[side][koma] = now;
+    // 駒種0（王など、本来は持駒にならないもの）はハッシュに含めない
+    if (koma >= Koma.FU && koma <= Koma.HI) {
+      const base: number = (side * 8 + koma) * Zobrist.HAND_MAX;
+      this.hashHi ^= Zobrist.handHi[base + old] ^ Zobrist.handHi[base + now];
+      this.hashLo ^= Zobrist.handLo[base + old] ^ Zobrist.handLo[base + now];
+    }
   }
 
   // 与えられた手で一手すすめてみる
@@ -76,9 +143,9 @@ class Kyokumen {
     if (te.capture !== Koma.EMPTY) {
       const koma: number = te.capture & 0x07;  // 成フラグや先手後手フラグをクリア
       if (Koma.isSente(te.capture)) {
-        this.hand[1][koma]++;
+        this.changeHand(1, koma, 1);
       } else {
-        this.hand[0][koma]++;
+        this.changeHand(0, koma, 1);
       }
     }
 
@@ -86,9 +153,9 @@ class Kyokumen {
     if (te.from.suji === 0) {
       const koma: number = te.koma & 0x07;
       if (Koma.isSente(te.koma)) {
-        this.hand[0][koma]--;
+        this.changeHand(0, koma, -1);
       } else {
-        this.hand[1][koma]--;
+        this.changeHand(1, koma, -1);
       }
     } else {  //盤上の駒だった場合は元の位置をEMPTYに
       this.putKoma(te.from, Koma.EMPTY);
@@ -116,9 +183,9 @@ class Kyokumen {
       const koma: number = te.capture & 0x07;
       // 持駒を減らす
       if(Koma.isSente(te.capture)) {
-        this.hand[1][koma]--;
+        this.changeHand(1, koma, -1);
       } else {
-        this.hand[0][koma]--;
+        this.changeHand(0, koma, -1);
       }
     }
 
@@ -126,9 +193,9 @@ class Kyokumen {
     if(te.from.suji === 0) {
       const koma: number = te.koma & 0x07;
       if(Koma.isSente(te.koma)) {
-        this.hand[0][koma]++;
+        this.changeHand(0, koma, 1);
       } else {
-        this.hand[1][koma]++;
+        this.changeHand(1, koma, 1);
       }
     // 打駒でなかった場合、元の位置に戻す
     } else {

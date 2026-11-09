@@ -50,6 +50,8 @@ class Main {
     }
     // 玉位置情報をセット
     k.researchGyoku();
+    // 局面ハッシュを計算（盤面を直接設定したため、ここで一から計算する）
+    k.initHash();
 
 
     /* テスト用の表示
@@ -79,9 +81,13 @@ class Main {
       }
 
       // 千日手チェック。連続王手の千日手には未対応。
+      // 局面ハッシュ（手番を含む）が一致した場合だけ、念のため全盤面を比較して確定させる。
+      // （盤面の比較は、ハッシュが一致したときしか行われないため、ほぼ負荷にならない）
       let sameKyokumen: number = 0;
+      const hi: number = k.keyHi();
+      const lo: number = k.keyLo();
       this.kyokumenHistory.forEach(kyokumen => {
-        if(k.equals(kyokumen)) sameKyokumen++;
+        if(kyokumen.keyHi() === hi && kyokumen.keyLo() === lo && k.equals(kyokumen)) sameKyokumen++;
       });
       if(sameKyokumen >= 4) {
         console.log('【 千日手 】\n');
