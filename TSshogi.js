@@ -523,6 +523,11 @@ class Kyokumen {
     // 玉の位置をプロパティとして保持する。初期値は絶対に利きの届かない盤外。
     this.kingS = new Position(-2, -2);
     this.kingG = new Position(-2, -2);
+    // 局面ハッシュ（盤上の駒と持駒の分。手番は含まず、keyHi/keyLoで加味する）。
+    // 64bitを32bitずつに分けて保持する。putKomaやmove/backで差分更新される。
+    // 盤面や持駒を直接書き換えた場合は、initHashで再計算すること。
+    this.hashHi = 0;
+    this.hashLo = 0;
     this.ban = Array(11);
     for (let i = 0; i < 11; i++) {
       this.ban[i] = new Array(11).fill(0);
@@ -543,7 +548,42 @@ class Kyokumen {
     k.hand[0] = this.hand[0].slice(0);
     k.hand[1] = this.hand[1].slice(0);
     k.teban = this.teban;
+    k.hashHi = this.hashHi;
+    k.hashLo = this.hashLo;
     return k;
+  }
+  // 盤上の駒と持駒から、局面ハッシュを一から計算し直す。
+  // 初期配置の設定後や棋譜の読み込み後など、盤面や持駒を直接書き換えた場合に呼ぶ。
+  initHash() {
+    let hi = 0;
+    let lo = 0;
+    for (let suji = 1; suji <= 9; suji++) {
+      for (let dan = 1; dan <= 9; dan++) {
+        const koma = this.ban[suji][dan];
+        if (koma === Koma.EMPTY) continue;
+        const idx = koma * Zobrist.SQUARES + (suji - 1) * 9 + (dan - 1);
+        hi ^= Zobrist.boardHi[idx];
+        lo ^= Zobrist.boardLo[idx];
+      }
+    }
+    for (let side = 0; side < 2; side++) {
+      for (let koma = Koma.FU; koma <= Koma.HI; koma++) {
+        const idx = (side * 8 + koma) * Zobrist.HAND_MAX + this.hand[side][koma];
+        hi ^= Zobrist.handHi[idx];
+        lo ^= Zobrist.handLo[idx];
+      }
+    }
+    this.hashHi = hi;
+    this.hashLo = lo;
+  }
+  // 手番を加味した局面のキー（上位32bit）。置換表や千日手判定ではこちらを使う。
+  // 手番は外部から直接書き換えられるため、ここで加味する。
+  keyHi() {
+    return this.teban === GOTE ? this.hashHi ^ Zobrist.tebanHi : this.hashHi;
+  }
+  // 手番を加味した局面のキー（下位32bit）
+  keyLo() {
+    return this.teban === GOTE ? this.hashLo ^ Zobrist.tebanLo : this.hashLo;
   }
   equals(k) {
     // 手番の比較
@@ -571,9 +611,32 @@ class Kyokumen {
     if (suji < 1 || suji > 9 || dan < 1 || dan > 9) return Koma.WALL;
     return this.ban[suji][dan];
   }
-  // 指定位置に駒を置く
+  // 指定位置に駒を置く（局面ハッシュも差分更新する）
   putKoma(p, koma) {
+    const sq = (p.suji - 1) * 9 + (p.dan - 1);
+    const old = this.ban[p.suji][p.dan];
+    if (old !== Koma.EMPTY) {
+      this.hashHi ^= Zobrist.boardHi[old * Zobrist.SQUARES + sq];
+      this.hashLo ^= Zobrist.boardLo[old * Zobrist.SQUARES + sq];
+    }
+    if (koma !== Koma.EMPTY) {
+      this.hashHi ^= Zobrist.boardHi[koma * Zobrist.SQUARES + sq];
+      this.hashLo ^= Zobrist.boardLo[koma * Zobrist.SQUARES + sq];
+    }
     this.ban[p.suji][p.dan] = koma;
+  }
+  // 持駒の枚数をdelta枚増減する（局面ハッシュも差分更新する）。
+  // sideは0が先手、1が後手。
+  changeHand(side, koma, delta) {
+    const old = this.hand[side][koma];
+    const now = old + delta;
+    this.hand[side][koma] = now;
+    // 駒種0（王など、本来は持駒にならないもの）はハッシュに含めない
+    if (koma >= Koma.FU && koma <= Koma.HI) {
+      const base = (side * 8 + koma) * Zobrist.HAND_MAX;
+      this.hashHi ^= Zobrist.handHi[base + old] ^ Zobrist.handHi[base + now];
+      this.hashLo ^= Zobrist.handLo[base + old] ^ Zobrist.handLo[base + now];
+    }
   }
   // 与えられた手で一手すすめてみる
   // 自身の駒を取るような手は渡されないことが保証されている
@@ -583,18 +646,18 @@ class Kyokumen {
     if (te.capture !== Koma.EMPTY) {
       const koma = te.capture & 0x07; // 成フラグや先手後手フラグをクリア
       if (Koma.isSente(te.capture)) {
-        this.hand[1][koma]++;
+        this.changeHand(1, koma, 1);
       } else {
-        this.hand[0][koma]++;
+        this.changeHand(0, koma, 1);
       }
     }
     // 持駒を打つ手だった場合はその持駒を減らす
     if (te.from.suji === 0) {
       const koma = te.koma & 0x07;
       if (Koma.isSente(te.koma)) {
-        this.hand[0][koma]--;
+        this.changeHand(0, koma, -1);
       } else {
-        this.hand[1][koma]--;
+        this.changeHand(1, koma, -1);
       }
     } else {
       //盤上の駒だった場合は元の位置をEMPTYに
@@ -619,18 +682,18 @@ class Kyokumen {
       const koma = te.capture & 0x07;
       // 持駒を減らす
       if (Koma.isSente(te.capture)) {
-        this.hand[1][koma]--;
+        this.changeHand(1, koma, -1);
       } else {
-        this.hand[0][koma]--;
+        this.changeHand(0, koma, -1);
       }
     }
     // 打ち駒だった場合、持駒に戻す
     if (te.from.suji === 0) {
       const koma = te.koma & 0x07;
       if (Koma.isSente(te.koma)) {
-        this.hand[0][koma]++;
+        this.changeHand(0, koma, 1);
       } else {
-        this.hand[1][koma]++;
+        this.changeHand(1, koma, 1);
       }
       // 打駒でなかった場合、元の位置に戻す
     } else {
@@ -885,7 +948,7 @@ Kyokumen.komaValue = [
   480,
   580,
   900,
-  1070,
+  1070, // 先手後手どちらでもない空～飛まで
   10000,
   580,
   580,
@@ -893,7 +956,7 @@ Kyokumen.komaValue = [
   580,
   0,
   1200,
-  1400,
+  1400, // 先手後手どちらでもない王～成駒～竜まで
   0,
   100,
   290,
@@ -901,7 +964,7 @@ Kyokumen.komaValue = [
   480,
   580,
   900,
-  1070,
+  1070, // 無、先手の歩～飛
   10000,
   580,
   580,
@@ -909,7 +972,7 @@ Kyokumen.komaValue = [
   580,
   0,
   1200,
-  1400,
+  1400, // 先手の王～成駒～竜
   0,
   -100,
   -290,
@@ -917,7 +980,7 @@ Kyokumen.komaValue = [
   -480,
   -580,
   -900,
-  -1070,
+  -1070, // 無、後手の歩～飛
   -10000,
   -580,
   -580,
@@ -958,6 +1021,8 @@ class Main {
     }
     // 玉位置情報をセット
     k.researchGyoku();
+    // 局面ハッシュを計算（盤面を直接設定したため、ここで一から計算する）
+    k.initHash();
     /* テスト用の表示
         // この局面における合法手も表示してみる
         console.log(k.toString());
@@ -982,9 +1047,14 @@ class Main {
         break;
       }
       // 千日手チェック。連続王手の千日手には未対応。
+      // 局面ハッシュ（手番を含む）が一致した場合だけ、念のため全盤面を比較して確定させる。
+      // （盤面の比較は、ハッシュが一致したときしか行われないため、ほぼ負荷にならない）
       let sameKyokumen = 0;
+      const hi = k.keyHi();
+      const lo = k.keyLo();
       this.kyokumenHistory.forEach((kyokumen) => {
-        if (k.equals(kyokumen)) sameKyokumen++;
+        if (kyokumen.keyHi() === hi && kyokumen.keyLo() === lo && k.equals(kyokumen))
+          sameKyokumen++;
       });
       if (sameKyokumen >= 4) {
         console.log('【 千日手 】\n');
@@ -1119,11 +1189,34 @@ class Human {
   }
 }
 class Sikou {
+  // 一部の項目だけを指定してもよい。省略した項目はDEFAULT_CONFIGの値となる。
+  constructor(config = {}) {
+    this.config = { ...Sikou.DEFAULT_CONFIG, ...config };
+    this.tt = this.config.ttBits > 0 ? new TranspositionTable(this.config.ttBits) : null;
+  }
+  // 詰みを表す評価値は「根からの深さ」を含んでいるため、
+  // 置換表には「その局面からの詰みまでの手数」の形に直して保存する。
+  // （同じ局面でも、根からの深さが違えば評価値の見え方が変わるため）
+  static toTTScore(score, ply) {
+    if (score >= Sikou.MATE_BOUND) return score + ply;
+    if (score <= -Sikou.MATE_BOUND) return score - ply;
+    return score;
+  }
+  // 置換表から取り出した評価値を、現在の根からの深さに合わせた値に直す
+  static fromTTScore(score, ply) {
+    if (score >= Sikou.MATE_BOUND) return score - ply;
+    if (score <= -Sikou.MATE_BOUND) return score + ply;
+    return score;
+  }
   getNextTe(k) {
+    // 局面ハッシュを念のため計算し直す。（盤面を直接書き換えた場合などに
+    // 差分更新の結果とずれていても、探索の起点を正しくするため）
+    k.initHash();
+    if (this.tt !== null) this.tt.newGeneration();
     // 手を格納する変数。投了で初期化しておく。
     const start = Date.now();
     let te = new Te(0, new Position(0, 0), new Position(0, 0), false, Koma.EMPTY);
-    const eva = this.negaMax(te, k, -Sikou.INFINITE, Sikou.INFINITE, 0, Sikou.DEPTH_MAX);
+    const eva = this.negaMax(te, k, -Sikou.INFINITE, Sikou.INFINITE, 0, this.config.depth);
     const end = Date.now();
     console.log(`（探索時間：${end - start} ms　評価値：${Math.floor(eva)}）`);
     return te;
@@ -1137,6 +1230,30 @@ class Sikou {
     if (depth >= depthMax) {
       return this.quiescence(k, alpha, beta, 0);
     }
+    // この局面からの残りの探索深さ
+    const remaining = depthMax - depth;
+    // 置換表を参照する。見つかったエントリの最善手は、手の並べ替えで先頭にする。
+    const tt = this.tt;
+    let hi = 0;
+    let lo = 0;
+    let ttMove = 0;
+    if (tt !== null) {
+      hi = k.keyHi();
+      lo = k.keyLo();
+      if (tt.probe(hi, lo)) {
+        ttMove = tt.hitMove;
+        // 十分深く読んだ結果であれば、探索せずにその評価値を使う。
+        // ただし根（depth 0）では、指す手を確定させる必要があるため使わない。
+        if (depth > 0 && tt.hitDepth >= remaining) {
+          const score = Sikou.fromTTScore(tt.hitScore, depth);
+          if (tt.hitFlag === TranspositionTable.EXACT) return score;
+          if (tt.hitFlag === TranspositionTable.LOWER && score >= beta) return score;
+          if (tt.hitFlag === TranspositionTable.UPPER && score <= alpha) return score;
+        }
+      }
+    }
+    // 探索前のαを保存しておく（置換表に保存する評価値の種類の判定に使う）
+    const alphaOrig = alpha;
     // まずは合法手の生成
     let legalTe = GenerateMoves.generateLegalMoves(k);
     // 合法手がない＝この局面の手番側は詰まされている。
@@ -1144,6 +1261,8 @@ class Sikou {
     if (legalTe.length === 0) {
       return -(Sikou.INFINITE - depth);
     }
+    // 良さそうな手から先に読むことで、βカットが起こりやすくなる
+    Sikou.orderMoves(legalTe, ttMove);
     // 最大となる候補手の評価値
     let maxEva = -Sikou.INFINITE;
     // 合法手の内の一つを一手指してみて、その評価値を取得
@@ -1184,8 +1303,73 @@ class Sikou {
       te.promote = legalTe[0].promote;
       te.capture = legalTe[0].capture;
     }
+    // 置換表に結果を保存する。
+    // 評価値の種類は、探索前のαとβに対する結果の位置で決まる。
+    //   α以下：どの手もαを超えられなかった（実際の評価値はこれ以下）
+    //   β以上：βカットが起きた（実際の評価値はこれ以上）
+    //   その間：正確な評価値
+    // 上限の場合は最善手が定まっていないため、手は保存しない。
+    if (tt !== null) {
+      let flag;
+      if (maxEva <= alphaOrig) {
+        flag = TranspositionTable.UPPER;
+      } else if (maxEva >= beta) {
+        flag = TranspositionTable.LOWER;
+      } else {
+        flag = TranspositionTable.EXACT;
+      }
+      const move = flag === TranspositionTable.UPPER ? 0 : TranspositionTable.packMove(te);
+      tt.store(hi, lo, remaining, Sikou.toTTScore(maxEva, depth), flag, move);
+    }
     // 評価値を返す
     return maxEva;
+  }
+  // 手の並べ替え（move ordering）の優先度。大きいほど先に読む。
+  // ・駒を取る手を最優先とし、取られる駒の価値が高いほど、
+  //   また取る側の駒の価値が低いほど優先する（MVV-LVA）
+  // ・成る手は、成ることによる駒の価値の増加分だけ優先する
+  // ・それ以外（駒を取らない、成らない手）は同順位
+  // ttMoveは置換表に保存されていた最善手（packMoveで圧縮したもの、無ければ0）。
+  // 一致する手は、他のどの手よりも優先する。
+  static scoreMove(te, ttMove) {
+    let score = 0;
+    if (ttMove !== 0 && TranspositionTable.packMove(te) === ttMove) {
+      score += 10000000;
+    }
+    if (te.capture !== Koma.EMPTY) {
+      const victim = Math.abs(Kyokumen.komaValue[te.capture]);
+      const attacker = Math.abs(Kyokumen.komaValue[te.koma]);
+      score += 100000 + victim * 10 - attacker;
+    }
+    if (te.promote) {
+      const gain =
+        Math.abs(Kyokumen.komaValue[te.koma | Koma.PROMOTE]) -
+        Math.abs(Kyokumen.komaValue[te.koma]);
+      score += 1000 + gain;
+    }
+    return score;
+  }
+  // 与えられた手のリストを、優先度の高い順にその場で並べ替える。
+  // 優先度が同じ手は元の順序を保つ（安定）。
+  // リストは短く、同順位の手が多いため、挿入ソートを用いる。
+  static orderMoves(list, ttMove = 0) {
+    const n = list.length;
+    const scores = new Array(n);
+    for (let i = 0; i < n; i++) {
+      scores[i] = Sikou.scoreMove(list[i], ttMove);
+    }
+    for (let i = 1; i < n; i++) {
+      const te = list[i];
+      const score = scores[i];
+      let j = i - 1;
+      while (j >= 0 && scores[j] < score) {
+        list[j + 1] = list[j];
+        scores[j + 1] = scores[j];
+        j--;
+      }
+      list[j + 1] = te;
+      scores[j + 1] = score;
+    }
   }
   // 静止探索。探索深さの限界に達した局面で、駒の取り合いが落ち着くまで
   // 「駒を取る手」だけを読み進めてから評価する（水平線効果の緩和）。
@@ -1197,6 +1381,7 @@ class Sikou {
     if (standPat >= beta) return standPat;
     if (standPat > alpha) alpha = standPat;
     const captures = GenerateMoves.generateCaptureMoves(k);
+    Sikou.orderMoves(captures);
     let maxEva = standPat;
     for (let i = 0; i < captures.length; i++) {
       const tempTe = captures[i];
@@ -1215,9 +1400,17 @@ class Sikou {
   }
 }
 Sikou.INFINITE = 99999;
-Sikou.DEPTH_MAX = 4;
 // 静止探索で、探索限界からさらに読み進める最大の深さ
 Sikou.QS_DEPTH_MAX = 6;
+// この値以上（以下）の評価値は、詰みを表すものとして扱う
+Sikou.MATE_BOUND = Sikou.INFINITE - 100;
+// 省略された項目に使われる既定値
+Sikou.DEFAULT_CONFIG = {
+  depth: 4,
+  josekiMaxTe: 0,
+  tsumeDepth: 0,
+  ttBits: 20,
+};
 class Position {
   constructor(suji = 0, dan = 0) {
     this.suji = suji;
@@ -1301,5 +1494,125 @@ class Te {
     );
   }
 }
+/* 置換表。局面ハッシュをキーに、その局面で行った探索の結果を保持する。
+   同じ局面に別の手順で再び行き着いたとき（transposition）や、
+   前の手番で読んだ局面に再び出会ったときに、探索結果を再利用するためのもの。
+
+   エントリ数は2の累乗（1 << bits）個。局面ハッシュの下位bitsで格納位置を決め、
+   同じ位置に別の局面が来た場合は、置き換え方針（storeを参照）に従う。
+   速度とメモリ効率のため、エントリの各項目は型付き配列に分けて持つ。 */
+class TranspositionTable {
+  constructor(bits) {
+    this.generation = 0;
+    // probeで見つかったエントリの内容の受け渡し用。
+    // 探索中に何度も呼ばれるため、オブジェクトを都度生成せずプロパティに入れて返す。
+    this.hitScore = 0;
+    this.hitDepth = 0;
+    this.hitFlag = 0;
+    this.hitMove = 0;
+    const size = 1 << bits;
+    this.mask = size - 1;
+    this.keyHi = new Int32Array(size);
+    this.keyLo = new Int32Array(size);
+    this.scores = new Float64Array(size);
+    this.depths = new Int8Array(size);
+    this.flags = new Uint8Array(size);
+    this.ages = new Uint8Array(size);
+    this.moves = new Int32Array(size);
+  }
+  // 新しい探索（一手ごと）の開始時に呼ぶ。
+  // 前の探索で書き込んだエントリは、古いものとして上書きされやすくなる。
+  newGeneration() {
+    this.generation = (this.generation + 1) & 0xff;
+  }
+  // 全エントリを消去する
+  clear() {
+    this.flags.fill(0);
+    this.generation = 0;
+  }
+  // 局面のキーでエントリを探す。見つかればtrueを返し、hit〜プロパティに内容を入れる。
+  probe(hi, lo) {
+    const idx = lo & this.mask;
+    if (this.flags[idx] !== 0 && this.keyHi[idx] === hi && this.keyLo[idx] === lo) {
+      this.hitScore = this.scores[idx];
+      this.hitDepth = this.depths[idx];
+      this.hitFlag = this.flags[idx];
+      this.hitMove = this.moves[idx];
+      return true;
+    }
+    return false;
+  }
+  // エントリを書き込む。
+  // 置き換え方針：同じ世代（今回の探索）で書き込まれた、より深く読んだ結果は残す。
+  // それ以外（空き、前の世代、同じ深さ以上の結果）は上書きする。
+  store(hi, lo, depth, score, flag, move) {
+    const idx = lo & this.mask;
+    if (this.flags[idx] !== 0 && this.ages[idx] === this.generation && this.depths[idx] > depth) {
+      return;
+    }
+    this.keyHi[idx] = hi;
+    this.keyLo[idx] = lo;
+    this.scores[idx] = score;
+    this.depths[idx] = depth > 127 ? 127 : depth;
+    this.flags[idx] = flag;
+    this.ages[idx] = this.generation;
+    this.moves[idx] = move;
+  }
+  // 手を整数に圧縮する（局面ごとの最善手の保存用）。手が無い場合の0とは区別できる。
+  // 駒（6bit）、移動元の筋と段（各4bit）、移動先の筋と段（各4bit）、成り（1bit）。
+  static packMove(te) {
+    return (
+      te.koma |
+      (te.from.suji << 6) |
+      (te.from.dan << 10) |
+      (te.to.suji << 14) |
+      (te.to.dan << 18) |
+      ((te.promote ? 1 : 0) << 22)
+    );
+  }
+}
+// 評価値の種類
+TranspositionTable.EXACT = 1; // 正確な評価値
+TranspositionTable.LOWER = 2; // 評価値は下限（βカットが起き、これ以上の可能性がある）
+TranspositionTable.UPPER = 3; // 評価値は上限（αを超える手がなく、これ以下の可能性がある）
+/* 局面ハッシュ（Zobrist hash）用の乱数表。
+   局面を表す64bitのキーを、32bitずつ二つ（Hi/Lo）に分けて扱う。
+   JavaScriptのnumberは64bitの整数ビット演算ができず、BigIntは遅いため。
+   乱数は固定の種から生成するので、実行のたびに値が変わることはない
+   （ハッシュ値を保存して後から使う場合も、同じ値が得られる）。 */
+class Zobrist {
+  // 乱数の生成（mulberry32）。
+  // xorshift系の乱数はビット演算に対して線形で、キー同士のXORに規則性が残りやすいため、
+  // 乗算を含む非線形の乱数を用いる。
+  // zeroEveryが1以上の場合、その個数ごとの先頭（添字がzeroEveryの倍数）のキーを0にする。
+  static makeKeys(count, seed, zeroEvery) {
+    const keys = new Int32Array(count);
+    let a = seed | 0;
+    for (let i = 0; i < count; i++) {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      keys[i] = (t ^ (t >>> 14)) | 0;
+      if (zeroEvery > 0 && i % zeroEvery === 0) keys[i] = 0;
+    }
+    return keys;
+  }
+}
+// 持駒の枚数の上限+1（最も多い歩でも18枚なので、枚数は0～18）
+Zobrist.HAND_MAX = 19;
+// 盤上の升の数
+Zobrist.SQUARES = 81;
+// 駒コードの種類数（先手後手や成りのフラグを含めた0x00～0x3F）
+Zobrist.KOMA_KINDS = 64;
+// 盤上の駒用。添字は「駒コード × 81 + 升の番号」。升の番号は (筋-1)*9 + (段-1)。
+Zobrist.boardHi = Zobrist.makeKeys(Zobrist.KOMA_KINDS * Zobrist.SQUARES, 0x1badc0de, 0);
+Zobrist.boardLo = Zobrist.makeKeys(Zobrist.KOMA_KINDS * Zobrist.SQUARES, 0x2f6e2b1d, 0);
+// 持駒用。添字は「(先手後手 × 8 + 駒種) × HAND_MAX + 枚数」。
+// 枚数0のキーは0とする（持っていない駒は、ハッシュに何も寄与しない）。
+Zobrist.handHi = Zobrist.makeKeys(2 * 8 * Zobrist.HAND_MAX, 0x3c6ef372, Zobrist.HAND_MAX);
+Zobrist.handLo = Zobrist.makeKeys(2 * 8 * Zobrist.HAND_MAX, 0x4a7484aa, Zobrist.HAND_MAX);
+// 後手番のときだけ加えるキー
+Zobrist.tebanHi = Zobrist.makeKeys(1, 0x5cb0a9dc, 0)[0];
+Zobrist.tebanLo = Zobrist.makeKeys(1, 0x6dc7e0b3, 0)[0];
 
 Main.main();
