@@ -92,17 +92,39 @@ class Human implements Player {
   }
 }
 
+// 思考ルーチンの強さを調整するためのパラメータ
+interface SikouConfig {
+  // 読み深度（実装済み）
+  depth: number;
+  // 定跡を使う手数の上限。0なら定跡を使わない（未実装）
+  josekiMaxTe: number;
+  // 詰将棋ルーチンで読む手数の上限。0なら詰将棋ルーチンを使わない（未実装）
+  tsumeDepth: number;
+}
+
 class Sikou implements Player {
   static readonly INFINITE = 99999;
-  static readonly DEPTH_MAX = 4;
   // 静止探索で、探索限界からさらに読み進める最大の深さ
   static readonly QS_DEPTH_MAX = 6;
+  // 省略された項目に使われる既定値
+  static readonly DEFAULT_CONFIG: SikouConfig = {
+    depth: 4,
+    josekiMaxTe: 0,
+    tsumeDepth: 0
+  };
+
+  private readonly config: SikouConfig;
+
+  // 一部の項目だけを指定してもよい。省略した項目はDEFAULT_CONFIGの値となる。
+  constructor(config: Partial<SikouConfig> = {}) {
+    this.config = { ...Sikou.DEFAULT_CONFIG, ...config };
+  }
 
   getNextTe(k: Kyokumen): Te {
     // 手を格納する変数。投了で初期化しておく。
     const start: number = Date.now();
     let te: Te = new Te(0, new Position(0, 0), new Position(0, 0), false, Koma.EMPTY);
-    const eva = this.negaMax(te, k, -Sikou.INFINITE, Sikou.INFINITE , 0, Sikou.DEPTH_MAX);
+    const eva = this.negaMax(te, k, -Sikou.INFINITE, Sikou.INFINITE , 0, this.config.depth);
     const end: number = Date.now();
     console.log(`（探索時間：${end - start} ms　評価値：${Math.floor(eva)}）`);
     return te;
