@@ -54,6 +54,23 @@ class GenerateMoves {
     return false;
   }
 
+  // 成らずに指すことができない手（不成不可）かどうかを判定する。
+  // 成らないと行き所のない駒になってしまう、次の場合に真を返す。
+  //   ・歩と香が、一段目（後手なら九段目）に進む
+  //   ・桂が、二段目以上（後手なら八段目以下）に進む
+  // komaは動かす駒（先手後手の情報を含む）、toDanは移動先の段。
+  static mustPromote(koma: number, toDan: number): boolean {
+    const komashu: number = Koma.getKomashu(koma);
+    if (komashu !== Koma.FU && komashu !== Koma.KYO && komashu !== Koma.KEI) return false;
+    if (Koma.isSente(koma)) {
+      return komashu === Koma.KEI ? toDan <= 2 : toDan === 1;
+    }
+    if (Koma.isGote(koma)) {
+      return komashu === Koma.KEI ? toDan >= 8 : toDan === 9;
+    }
+    return false;
+  }
+
   // 与えられた配列"list"に成、不成を考慮して
   // 生成した候補手を追加する
   static addTe(k: Kyokumen, list: Te[], teban: number, koma: number, from: Position, to: Position): void {
@@ -68,14 +85,9 @@ class GenerateMoves {
       fluctuation = -1;
     }
 
-    // 一段目（後手なら九段目）の歩と香は成る
-    if ((Koma.getKomashu(koma) === Koma.FU || Koma.getKomashu(koma) === Koma.KYO) && to.dan === dan) {
-      const te: Te = new Te(koma, from, to, true, k.getKomaData(to));
-      list.push(te);
-      return;
-    }
-    // 二段目以上（後手なら八段目以下）の桂馬は成る
-    if (Koma.getKomashu(koma) === Koma.KEI && to.dan * fluctuation <= (dan + fluctuation) * fluctuation) {
+    // 不成不可の手（一段目（後手なら九段目）の歩と香、
+    // 二段目以上（後手なら八段目以下）の桂）は成りのみ生成
+    if (GenerateMoves.mustPromote(koma, to.dan)) {
       const te: Te = new Te(koma, from, to, true, k.getKomaData(to));
       list.push(te);
       return;
