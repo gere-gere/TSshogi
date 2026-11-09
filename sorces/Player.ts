@@ -149,6 +149,9 @@ class Sikou implements Player {
       return -(Sikou.INFINITE - depth);
     }
 
+    // 良さそうな手から先に読むことで、βカットが起こりやすくなる
+    Sikou.orderMoves(legalTe);
+
     // 最大となる候補手の評価値
     let maxEva: number = -Sikou.INFINITE;
     // 合法手の内の一つを一手指してみて、その評価値を取得
@@ -195,6 +198,49 @@ class Sikou implements Player {
     return maxEva;
   }
 
+  // 手の並べ替え（move ordering）の優先度。大きいほど先に読む。
+  // ・駒を取る手を最優先とし、取られる駒の価値が高いほど、
+  //   また取る側の駒の価値が低いほど優先する（MVV-LVA）
+  // ・成る手は、成ることによる駒の価値の増加分だけ優先する
+  // ・それ以外（駒を取らない、成らない手）は同順位
+  static scoreMove(te: Te): number {
+    let score: number = 0;
+    if(te.capture !== Koma.EMPTY) {
+      const victim: number = Math.abs(Kyokumen.komaValue[te.capture]);
+      const attacker: number = Math.abs(Kyokumen.komaValue[te.koma]);
+      score += 100000 + victim * 10 - attacker;
+    }
+    if(te.promote) {
+      const gain: number = Math.abs(Kyokumen.komaValue[te.koma | Koma.PROMOTE])
+        - Math.abs(Kyokumen.komaValue[te.koma]);
+      score += 1000 + gain;
+    }
+    return score;
+  }
+
+  // 与えられた手のリストを、優先度の高い順にその場で並べ替える。
+  // 優先度が同じ手は元の順序を保つ（安定）。
+  // リストは短く、同順位の手が多いため、挿入ソートを用いる。
+  static orderMoves(list: Te[]): void {
+    const n: number = list.length;
+    const scores: number[] = new Array(n);
+    for(let i: number = 0; i < n; i++) {
+      scores[i] = Sikou.scoreMove(list[i]);
+    }
+    for(let i: number = 1; i < n; i++) {
+      const te: Te = list[i];
+      const score: number = scores[i];
+      let j: number = i - 1;
+      while(j >= 0 && scores[j] < score) {
+        list[j + 1] = list[j];
+        scores[j + 1] = scores[j];
+        j--;
+      }
+      list[j + 1] = te;
+      scores[j + 1] = score;
+    }
+  }
+
   // 静止探索。探索深さの限界に達した局面で、駒の取り合いが落ち着くまで
   // 「駒を取る手」だけを読み進めてから評価する（水平線効果の緩和）。
   // 取り合いに加わらない選択（stand pat）も許し、現局面の評価値を下限として扱う。
@@ -206,6 +252,7 @@ class Sikou implements Player {
     if(standPat > alpha) alpha = standPat;
 
     const captures: Te[] = GenerateMoves.generateCaptureMoves(k);
+    Sikou.orderMoves(captures);
     let maxEva: number = standPat;
     for(let i: number = 0; i < captures.length; i++) {
       const tempTe: Te = captures[i];
