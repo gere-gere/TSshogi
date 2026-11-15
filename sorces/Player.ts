@@ -8,6 +8,8 @@ interface Player {
     初手２六歩の場合は「2726」となる。
   2)成る時は末尾に「*」を付ける。
     ２三歩成の場合は「2423*」となる。
+    なお、３一歩のような「必ず成るしかない指し手」は
+    「*」がなくても成るものとして扱われる。
   3)持駒を打つ際は移動元の代わりに先頭二桁で駒種を表す。
     ３三角打の場合は「0633」となる。
   4)投了の際は「%TORYO」と入力する。
@@ -78,6 +80,11 @@ class Human implements Player {
       if(fromSuji !== 0) {
         // 駒を打つ手でない場合は駒を取得
         koma = k.getKomaData(from);
+        // 不成不可の手（成らないと行き所のない駒になる手）は、
+        // 「*」がなくても強制成として扱う
+        if(!promote && GenerateMoves.mustPromote(koma, toDan)) {
+          promote = true;
+        }
       }
       te = new Te(koma, from, to, promote, k.getKomaData(to));
       if(!te.contains(legalTe)) {
