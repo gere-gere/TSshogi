@@ -98,7 +98,7 @@ interface SikouConfig {
   depth: number;
   // 定跡を使う手数の上限。0なら定跡を使わない（未実装）
   josekiMaxTe: number;
-  // 詰将棋ルーチンで読む手数の上限。0なら詰将棋ルーチンを使わない（未実装）
+  // 詰将棋ルーチン（詰探索）で読む手数の上限。0なら詰将棋ルーチンを使わない（実装済み）
   tsumeDepth: number;
   // 置換表のエントリ数を2の累乗で指定する（20なら約100万エントリ、約20MB）。
   // 0以下なら置換表を使わない。置換表は対局を通して保持される。
@@ -115,7 +115,7 @@ class Sikou implements Player {
   static readonly DEFAULT_CONFIG: SikouConfig = {
     depth: 4,
     josekiMaxTe: 0,
-    tsumeDepth: 0,
+    tsumeDepth: 7,
     ttBits: 20
   };
 
@@ -152,6 +152,18 @@ class Sikou implements Player {
     if(this.tt !== null) this.tt.newGeneration();
     // 手を格納する変数。投了で初期化しておく。
     const start: number = Date.now();
+
+    // まずルート局面で詰探索を行い、詰みが見つかればその手を指す。
+    // （通常の探索は読み深度までしか読めないが、詰探索はそれより深い詰みも読める）
+    if(this.config.tsumeDepth > 0) {
+      const tsume: Tsume = new Tsume();
+      const mateTe: Te | null = tsume.search(k, this.config.tsumeDepth);
+      if(mateTe !== null) {
+        console.log(`（詰探索：${tsume.foundDepth}手詰め　ノード数：${tsume.nodes}　探索時間：${Date.now() - start} ms）`);
+        return mateTe;
+      }
+    }
+
     let te: Te = new Te(0, new Position(0, 0), new Position(0, 0), false, Koma.EMPTY);
     const eva = this.negaMax(te, k, -Sikou.INFINITE, Sikou.INFINITE , 0, this.config.depth);
     const end: number = Date.now();

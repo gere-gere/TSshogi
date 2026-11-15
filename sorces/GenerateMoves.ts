@@ -220,6 +220,24 @@ class GenerateMoves {
     return this.removeSelfMate(k, list)
   }
 
+  // 手番側が指せる合法手のうち、相手玉に王手をかける手だけを生成する。
+  // 詰探索の攻め方の手として使う。
+  // 現状は「全合法手を生成してから、指した後に相手玉へ利きがあるかで絞る」素朴な実装。
+  // （打ち歩詰めは合法手の生成時点で除外されているので、ここでは考慮不要）
+  static generateCheckMoves(k: Kyokumen): Te[] {
+    const legalTe: Te[] = this.generateLegalMoves(k);
+    const enemy: number = k.teban === SENTE ? GOTE : SENTE;
+    const list: Te[] = [];
+    for (let i: number = 0; i < legalTe.length; i++) {
+      const te: Te = legalTe[i];
+      k.move(te);
+      const check: boolean = this.isGyokuAttacked(k, enemy);
+      k.back(te);
+      if (check) list.push(te);
+    }
+    return list;
+  }
+
   // 盤上の特定の駒一つ分についての手を生成する
   // capturesOnlyがtrueの場合は、駒を取る手だけを生成する
   static generateOneKomaMoves(list: Te[], k: Kyokumen, koma: number, from: Position, capturesOnly: boolean = false): void {
