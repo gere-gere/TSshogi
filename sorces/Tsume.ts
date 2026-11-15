@@ -4,10 +4,11 @@
   受け方は「全ての応手で詰んでいなければならない」(AND)という交互の構造。
   評価値は使わず、詰むかどうかだけを判定する。
   手数の上限は反復深化で1手詰め、3手詰め、5手詰め…と浅い方から順に試すため、
-  最短の詰みが見つかる。ノード数の上限に達した場合は打ち切って詰みなしとして扱う。 */
+  最短の詰みが見つかる。ノード数の上限は既定では設けない（手数の上限があるので探索は必ず終わる）。
+  コンストラクタでノード数の上限を指定した場合は、それに達した時点で打ち切って詰みなしとして扱う。 */
 class Tsume {
-  // 一回の詰探索（反復深化の全体）で読むノード数の上限
-  static readonly NODE_MAX = 100000;
+  // ノード数の上限を設けないことを表す値（既定）
+  static readonly NODE_UNLIMITED = Infinity;
 
   // 探索したノード数
   nodes: number = 0;
@@ -16,11 +17,13 @@ class Tsume {
   // 詰みが見つかった手数
   foundDepth: number = 0;
 
+  // 一回の詰探索（反復深化の全体）で読むノード数の上限
   private nodeMax: number;
   // 根での詰ませる最初の一手
   private rootTe: Te | null = null;
 
-  constructor(nodeMax: number = Tsume.NODE_MAX) {
+  // nodeMaxを省略した場合は、ノード数の上限なし
+  constructor(nodeMax: number = Tsume.NODE_UNLIMITED) {
     this.nodeMax = nodeMax;
   }
 
