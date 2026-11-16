@@ -1063,14 +1063,8 @@ class Main {
       this.player[0] = sente.toUpperCase() === 'HUMAN' ? new Human() : new Sikou();
       this.player[1] = new Sikou();
     } else {
-      this.player[0] =
-        (sente === null || sente === void 0 ? void 0 : sente.toUpperCase()) === 'HUMAN'
-          ? new Human()
-          : new Sikou();
-      this.player[1] =
-        (gote === null || gote === void 0 ? void 0 : gote.toUpperCase()) === 'HUMAN'
-          ? new Human()
-          : new Sikou();
+      this.player[0] = sente?.toUpperCase() === 'HUMAN' ? new Human() : new Sikou();
+      this.player[1] = gote?.toUpperCase() === 'HUMAN' ? new Human() : new Sikou();
     }
     const k = new Kyokumen();
     if (!process.argv[2]) {
@@ -1274,7 +1268,7 @@ class Human {
 class Sikou {
   // 一部の項目だけを指定してもよい。省略した項目はDEFAULT_CONFIGの値となる。
   constructor(config = {}) {
-    this.config = Object.assign(Object.assign({}, Sikou.DEFAULT_CONFIG), config);
+    this.config = { ...Sikou.DEFAULT_CONFIG, ...config };
     this.tt = this.config.ttBits > 0 ? new TranspositionTable(this.config.ttBits) : null;
   }
   // 詰みを表す評価値は「根からの深さ」を含んでいるため、
