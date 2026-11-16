@@ -53,14 +53,16 @@ node.js には readline-sync モジュールのインストールが必要です
 
 #### ビルド（開発者向け）
 
-- `sorces/` 内の TypeScript だけを編集し、TSshogi.js は次の手順でまとめて生成します。
+- `sorces/` 内の TypeScript だけを編集し、TSshogi.js は次の手順でまとめて生成します。  
+  （TypeScript がグローバルにインストールされ、`tsc` コマンドが使えることが前提です）
 
   ```
   npm install
   npm run build
   ```
 
-  `tsc` で 1 ファイルにまとめ、Prettier で整形し、末尾に `Main.main();` を追記します。
+  `tsc` で 1 ファイルにまとめ、末尾に `Main.main();` を追記します。  
+  整形（Prettier、設定は `.prettierrc`）はエディタ等で別途行ってください。
 
 ---
 
