@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    /* sorces/*.ts を1ファイル（TSshogi.js）にまとめて出力する */
+    "target": "es2015",
+    "module": "none",
+    "outFile": "./TSshogi.js",
+    "rootDir": "./sorces",
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["sorces/*.ts"]
+}

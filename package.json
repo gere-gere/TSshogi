@@ -1,0 +1,21 @@
+{
+  "name": "tsshogi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TypeScript による将棋 AI",
+  "scripts": {
+    "build": "npm run build:tsc && npm run build:format && npm run build:main",
+    "build:tsc": "tsc -p .",
+    "build:format": "prettier --write TSshogi.js",
+    "build:main": "node scripts/appendMain.js"
+  },
+  "dependencies": {
+    "readline-sync": "^1.4.10"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/readline-sync": "^1.4.8",
+    "prettier": "^3.3.0",
+    "typescript": "~5.9.2"
+  }
+}

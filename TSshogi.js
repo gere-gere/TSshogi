@@ -62,6 +62,22 @@ class GenerateMoves {
     }
     return false;
   }
+  // 成らずに指すことができない手（不成不可）かどうかを判定する。
+  // 成らないと行き所のない駒になってしまう、次の場合に真を返す。
+  //   ・歩と香が、一段目（後手なら九段目）に進む
+  //   ・桂が、二段目以上（後手なら八段目以下）に進む
+  // komaは動かす駒（先手後手の情報を含む）、toDanは移動先の段。
+  static mustPromote(koma, toDan) {
+    const komashu = Koma.getKomashu(koma);
+    if (komashu !== Koma.FU && komashu !== Koma.KYO && komashu !== Koma.KEI) return false;
+    if (Koma.isSente(koma)) {
+      return komashu === Koma.KEI ? toDan <= 2 : toDan === 1;
+    }
+    if (Koma.isGote(koma)) {
+      return komashu === Koma.KEI ? toDan >= 8 : toDan === 9;
+    }
+    return false;
+  }
   // 与えられた配列"list"に成、不成を考慮して
   // 生成した候補手を追加する
   static addTe(k, list, teban, koma, from, to) {
@@ -75,20 +91,9 @@ class GenerateMoves {
       dan = 9;
       fluctuation = -1;
     }
-    // 一段目（後手なら九段目）の歩と香は成る
-    if (
-      (Koma.getKomashu(koma) === Koma.FU || Koma.getKomashu(koma) === Koma.KYO) &&
-      to.dan === dan
-    ) {
-      const te = new Te(koma, from, to, true, k.getKomaData(to));
-      list.push(te);
-      return;
-    }
-    // 二段目以上（後手なら八段目以下）の桂馬は成る
-    if (
-      Koma.getKomashu(koma) === Koma.KEI &&
-      to.dan * fluctuation <= (dan + fluctuation) * fluctuation
-    ) {
+    // 不成不可の手（一段目（後手なら九段目）の歩と香、
+    // 二段目以上（後手なら八段目以下）の桂）は成りのみ生成
+    if (GenerateMoves.mustPromote(koma, to.dan)) {
       const te = new Te(koma, from, to, true, k.getKomaData(to));
       list.push(te);
       return;
@@ -220,6 +225,23 @@ class GenerateMoves {
     }
     // 以上で生成した手のリストから自殺手や王手放置を除外する
     return this.removeSelfMate(k, list);
+  }
+  // 手番側が指せる合法手のうち、相手玉に王手をかける手だけを生成する。
+  // 詰探索の攻め方の手として使う。
+  // 現状は「全合法手を生成してから、指した後に相手玉へ利きがあるかで絞る」素朴な実装。
+  // （打ち歩詰めは合法手の生成時点で除外されているので、ここでは考慮不要）
+  static generateCheckMoves(k) {
+    const legalTe = this.generateLegalMoves(k);
+    const enemy = k.teban === SENTE ? GOTE : SENTE;
+    const list = [];
+    for (let i = 0; i < legalTe.length; i++) {
+      const te = legalTe[i];
+      k.move(te);
+      const check = this.isGyokuAttacked(k, enemy);
+      k.back(te);
+      if (check) list.push(te);
+    }
+    return list;
   }
   // 盤上の特定の駒一つ分についての手を生成する
   // capturesOnlyがtrueの場合は、駒を取る手だけを生成する
@@ -992,6 +1014,42 @@ Kyokumen.komaValue = [
 ];
 // 起動時に走るMainクラス。静的。
 class Main {
+  /* 千日手の判定。履歴の末尾を現在の局面として判定する。
+      同一局面（手番、盤面、持駒が同じ）が４回目の出現となったら千日手。
+      その場合、最初の出現から現在までの区間で、一方だけが全ての手で
+      王手をかけ続けていたなら、連続王手の千日手としてその側の反則負けとする。
+      双方が王手をかけ続けていた場合、またはどちらも王手をかけ続けていない場合は、
+      通常の千日手（引き分け）とする。 */
+  static judgeSennichite(history, checkHistory) {
+    const current = history.length - 1;
+    const k = history[current];
+    // 局面ハッシュ（手番を含む）が一致した場合だけ、念のため全盤面を比較して確定させる。
+    // （盤面の比較は、ハッシュが一致したときしか行われないため、ほぼ負荷にならない）
+    const hi = k.keyHi();
+    const lo = k.keyLo();
+    // 現在の局面と同一の局面が、履歴の何番目にあるか
+    const sameIdx = [];
+    for (let i = 0; i < history.length; i++) {
+      const kyokumen = history[i];
+      if (kyokumen.keyHi() === hi && kyokumen.keyLo() === lo && k.equals(kyokumen)) sameIdx.push(i);
+    }
+    if (sameIdx.length < 4) return Main.SENNICHITE_NONE;
+    // 最初の出現から現在の手前までの各局面について、手番側が王手されているかを調べる。
+    // 先手番の局面が全て王手されている＝後手が全ての手で王手をかけ続けている。
+    // 後手番の局面が全て王手されている＝先手が全ての手で王手をかけ続けている。
+    let senteChecking = true;
+    let goteChecking = true;
+    for (let n = sameIdx[0]; n < current; n++) {
+      if (history[n].teban === SENTE) {
+        if (!checkHistory[n]) goteChecking = false;
+      } else {
+        if (!checkHistory[n]) senteChecking = false;
+      }
+    }
+    if (senteChecking && !goteChecking) return Main.SENNICHITE_SENTE_LOSE;
+    if (goteChecking && !senteChecking) return Main.SENNICHITE_GOTE_LOSE;
+    return Main.SENNICHITE_DRAW;
+  }
   // 起動時に呼び出されるメイン関数
   // 引数としてPlyer情報を受け取る
   static main(sente, gote) {
@@ -1005,8 +1063,14 @@ class Main {
       this.player[0] = sente.toUpperCase() === 'HUMAN' ? new Human() : new Sikou();
       this.player[1] = new Sikou();
     } else {
-      this.player[0] = sente?.toUpperCase() === 'HUMAN' ? new Human() : new Sikou();
-      this.player[1] = gote?.toUpperCase() === 'HUMAN' ? new Human() : new Sikou();
+      this.player[0] =
+        (sente === null || sente === void 0 ? void 0 : sente.toUpperCase()) === 'HUMAN'
+          ? new Human()
+          : new Sikou();
+      this.player[1] =
+        (gote === null || gote === void 0 ? void 0 : gote.toUpperCase()) === 'HUMAN'
+          ? new Human()
+          : new Sikou();
     }
     const k = new Kyokumen();
     if (!process.argv[2]) {
@@ -1015,7 +1079,7 @@ class Main {
     } else {
       const filename = process.argv[2];
       let kifu;
-      const kifuStr = fs.readFileSync('./kifu/' + filename, 'utf-8');
+      const kifuStr = fs.readFileSync('../kifu/' + filename, 'utf-8');
       kifu = kifuStr.split('\n');
       k.readCsaKifu(kifu);
     }
@@ -1039,6 +1103,8 @@ class Main {
     while (true) {
       // 現在の局面を履歴に残す
       this.kyokumenHistory.push(k.clone());
+      // その局面の手番側が王手されているかも同時に記録する
+      this.checkHistory.push(GenerateMoves.isGyokuAttacked(k, k.teban));
       // 現在の局面での合法手を生成
       const legalTe = GenerateMoves.generateLegalMoves(k);
       // 合法手が一つもない＝詰み
@@ -1046,18 +1112,18 @@ class Main {
         console.log(k.teban === SENTE ? '後手の勝ち\n' : '先手の勝ち\n');
         break;
       }
-      // 千日手チェック。連続王手の千日手には未対応。
-      // 局面ハッシュ（手番を含む）が一致した場合だけ、念のため全盤面を比較して確定させる。
-      // （盤面の比較は、ハッシュが一致したときしか行われないため、ほぼ負荷にならない）
-      let sameKyokumen = 0;
-      const hi = k.keyHi();
-      const lo = k.keyLo();
-      this.kyokumenHistory.forEach((kyokumen) => {
-        if (kyokumen.keyHi() === hi && kyokumen.keyLo() === lo && k.equals(kyokumen))
-          sameKyokumen++;
-      });
-      if (sameKyokumen >= 4) {
+      // 千日手チェック。連続王手の千日手は、王手をかけ続けた側の反則負けとする。
+      const sennichite = this.judgeSennichite(this.kyokumenHistory, this.checkHistory);
+      if (sennichite === Main.SENNICHITE_DRAW) {
         console.log('【 千日手 】\n');
+        break;
+      }
+      if (sennichite === Main.SENNICHITE_SENTE_LOSE) {
+        console.log('【 連続王手の千日手 】\n先手の反則負け\n後手の勝ち\n');
+        break;
+      }
+      if (sennichite === Main.SENNICHITE_GOTE_LOSE) {
+        console.log('【 連続王手の千日手 】\n後手の反則負け\n先手の勝ち\n');
         break;
       }
       // 局面表示
@@ -1100,12 +1166,24 @@ Main.shokiBanmen = [
 Main.player = [];
 // 局面履歴
 Main.kyokumenHistory = [];
+// 局面履歴と同じ並びで、その局面の手番側が王手されているかを記録する。
+// （Kyokumen.cloneは玉の位置を複製しないため、履歴の局面からは王手判定ができない。
+// そのため、局面を履歴に積む時点で判定して保持している）
+// 連続王手の千日手の判定に使う。
+Main.checkHistory = [];
+// 千日手の判定結果
+Main.SENNICHITE_NONE = 0; // 千日手ではない
+Main.SENNICHITE_DRAW = 1; // 通常の千日手（引き分け）
+Main.SENNICHITE_SENTE_LOSE = 2; // 先手の連続王手の千日手（先手の反則負け）
+Main.SENNICHITE_GOTE_LOSE = 3; // 後手の連続王手の千日手（後手の反則負け）
 /* 入力ルール
   1）盤上の駒を動かす場合、移動元の位置を二桁の数字で
   続けて移動先の位置を二桁の数字で、合わせて四桁の数字で入力する。
     初手２六歩の場合は「2726」となる。
   2)成る時は末尾に「*」を付ける。
     ２三歩成の場合は「2423*」となる。
+    なお、３一歩のような「必ず成るしかない指し手」は
+    「*」がなくても成るものとして扱われる。
   3)持駒を打つ際は移動元の代わりに先頭二桁で駒種を表す。
     ３三角打の場合は「0633」となる。
   4)投了の際は「%TORYO」と入力する。
@@ -1176,6 +1254,11 @@ class Human {
       if (fromSuji !== 0) {
         // 駒を打つ手でない場合は駒を取得
         koma = k.getKomaData(from);
+        // 不成不可の手（成らないと行き所のない駒になる手）は、
+        // 「*」がなくても強制成として扱う
+        if (!promote && GenerateMoves.mustPromote(koma, toDan)) {
+          promote = true;
+        }
       }
       te = new Te(koma, from, to, promote, k.getKomaData(to));
       if (!te.contains(legalTe)) {
@@ -1191,7 +1274,7 @@ class Human {
 class Sikou {
   // 一部の項目だけを指定してもよい。省略した項目はDEFAULT_CONFIGの値となる。
   constructor(config = {}) {
-    this.config = { ...Sikou.DEFAULT_CONFIG, ...config };
+    this.config = Object.assign(Object.assign({}, Sikou.DEFAULT_CONFIG), config);
     this.tt = this.config.ttBits > 0 ? new TranspositionTable(this.config.ttBits) : null;
   }
   // 詰みを表す評価値は「根からの深さ」を含んでいるため、
@@ -1215,6 +1298,18 @@ class Sikou {
     if (this.tt !== null) this.tt.newGeneration();
     // 手を格納する変数。投了で初期化しておく。
     const start = Date.now();
+    // まずルート局面で詰探索を行い、詰みが見つかればその手を指す。
+    // （通常の探索は読み深度までしか読めないが、詰探索はそれより深い詰みも読める）
+    if (this.config.tsumeDepth > 0) {
+      const tsume = new Tsume();
+      const mateTe = tsume.search(k, this.config.tsumeDepth);
+      if (mateTe !== null) {
+        console.log(
+          `（詰探索：${tsume.foundDepth}手詰め　ノード数：${tsume.nodes}　探索時間：${Date.now() - start} ms）`
+        );
+        return mateTe;
+      }
+    }
     let te = new Te(0, new Position(0, 0), new Position(0, 0), false, Koma.EMPTY);
     const eva = this.negaMax(te, k, -Sikou.INFINITE, Sikou.INFINITE, 0, this.config.depth);
     const end = Date.now();
@@ -1408,7 +1503,7 @@ Sikou.MATE_BOUND = Sikou.INFINITE - 100;
 Sikou.DEFAULT_CONFIG = {
   depth: 4,
   josekiMaxTe: 0,
-  tsumeDepth: 0,
+  tsumeDepth: 7,
   ttBits: 20,
 };
 class Position {
@@ -1575,6 +1670,101 @@ class TranspositionTable {
 TranspositionTable.EXACT = 1; // 正確な評価値
 TranspositionTable.LOWER = 2; // 評価値は下限（βカットが起き、これ以上の可能性がある）
 TranspositionTable.UPPER = 3; // 評価値は上限（αを超える手がなく、これ以下の可能性がある）
+/* 詰探索（深さ優先探索、反復深化）
+  攻め方は王手の手だけ、受け方は全ての合法手（＝王手回避）を読む。
+  攻め方は「どれか一手で詰ませられればよい」(OR)、
+  受け方は「全ての応手で詰んでいなければならない」(AND)という交互の構造。
+  評価値は使わず、詰むかどうかだけを判定する。
+  手数の上限は反復深化で1手詰め、3手詰め、5手詰め…と浅い方から順に試すため、
+  最短の詰みが見つかる。ノード数の上限は既定では設けない（手数の上限があるので探索は必ず終わる）。
+  コンストラクタでノード数の上限を指定した場合は、それに達した時点で打ち切って詰みなしとして扱う。 */
+class Tsume {
+  // nodeMaxを省略した場合は、ノード数の上限なし
+  constructor(nodeMax = Tsume.NODE_UNLIMITED) {
+    // 探索したノード数
+    this.nodes = 0;
+    // ノード数の上限に達して打ち切ったか
+    this.aborted = false;
+    // 詰みが見つかった手数
+    this.foundDepth = 0;
+    // 根での詰ませる最初の一手
+    this.rootTe = null;
+    this.nodeMax = nodeMax;
+  }
+  /* 手番側から見て、depthMax手以内の詰みがあればその最初の一手を返す。なければnull。
+      局面kは探索中に書き換えるが、リターン時には元に戻っている。
+      （手番k.tebanは探索中に手を指す度に入れ替え、戻す） */
+  search(k, depthMax) {
+    this.nodes = 0;
+    this.aborted = false;
+    this.foundDepth = 0;
+    this.rootTe = null;
+    // 詰みの手数は奇数（攻め方の手で終わる）なので、1手詰めから2手ずつ深くする
+    for (let depth = 1; depth <= depthMax; depth += 2) {
+      if (this.orNode(k, depth, true)) {
+        this.foundDepth = depth;
+        return this.rootTe;
+      }
+      // 上限に達していたら、これ以上深くしても読み切れない
+      if (this.aborted) break;
+    }
+    return null;
+  }
+  // 攻め方の手番。残りdepth手（攻め方の手を含む）以内に詰ませられるかを返す。
+  orNode(k, depth, isRoot) {
+    if (depth <= 0) return false;
+    if (this.nodes >= this.nodeMax) {
+      this.aborted = true;
+      return false;
+    }
+    this.nodes++;
+    const checkTe = GenerateMoves.generateCheckMoves(k);
+    for (let i = 0; i < checkTe.length; i++) {
+      const te = checkTe[i];
+      k.move(te);
+      k.teban = k.teban === SENTE ? GOTE : SENTE;
+      const mated = this.andNode(k, depth - 1);
+      // 忘れずに局面を戻す
+      k.back(te);
+      k.teban = k.teban === SENTE ? GOTE : SENTE;
+      if (mated) {
+        if (isRoot) this.rootTe = te;
+        return true;
+      }
+      // 打ち切られた後は、これ以上読んでも結果が信用できない
+      if (this.aborted) return false;
+    }
+    return false;
+  }
+  // 受け方の手番。残りdepth手（受け方の手を含む）以内に全ての応手を詰ませられるかを返す。
+  andNode(k, depth) {
+    if (this.nodes >= this.nodeMax) {
+      this.aborted = true;
+      return false;
+    }
+    this.nodes++;
+    // 王手がかかっているので、合法手は王手回避の手だけになる
+    const legalTe = GenerateMoves.generateLegalMoves(k);
+    // 応手がなければ詰み
+    if (legalTe.length === 0) return true;
+    // 手数を使い切っていれば、詰んでいないので失敗
+    if (depth <= 0) return false;
+    for (let i = 0; i < legalTe.length; i++) {
+      const te = legalTe[i];
+      k.move(te);
+      k.teban = k.teban === SENTE ? GOTE : SENTE;
+      const mated = this.orNode(k, depth - 1, false);
+      k.back(te);
+      k.teban = k.teban === SENTE ? GOTE : SENTE;
+      // 一つでも逃れられる応手があれば失敗。
+      // （打ち切られた場合も、falseが返るのでここで抜ける）
+      if (!mated) return false;
+    }
+    return true;
+  }
+}
+// ノード数の上限を設けないことを表す値（既定）
+Tsume.NODE_UNLIMITED = Infinity;
 /* 局面ハッシュ（Zobrist hash）用の乱数表。
    局面を表す64bitのキーを、32bitずつ二つ（Hi/Lo）に分けて扱う。
    JavaScriptのnumberは64bitの整数ビット演算ができず、BigIntは遅いため。
