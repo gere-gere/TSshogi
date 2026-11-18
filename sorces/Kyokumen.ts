@@ -409,7 +409,37 @@ class Kyokumen {
     return count;
   }
 
-  // 局面評価関数。駒の価値の総和に、飛・角・竜・馬の利きの加点を加えたもの。
+  // 玉の守りの評価。玉の周り8マスにいる味方駒を、駒種ごとの点数で合計する。
+  // 金・馬・成駒（と金、成香、成桂、成銀）は5点、銀・竜は4点、その他（歩、香、桂、飛、角）は1点。
+  // 添字は駒種（getKomashuの値）。玉は自分の隣にはいないので0。
+  private static readonly GUARD_POINTS: number[] = [
+    0, 1, 1, 1, 4, 5, 1, 1,    // 空、歩、香、桂、銀、金、角、飛
+    0, 5, 5, 5, 5, 0, 5, 4     // 玉、と金、成香、成桂、成銀、（未使用）、馬、竜
+  ];
+  // 守りの点数の上限。守りの基本形である金2枚＋銀1枚（5+5+4）の合計
+  static readonly KING_GUARD_MAX: number = 14;
+  // 守りの点数1単位あたりの評価値
+  static readonly KING_GUARD_UNIT: number = 3;
+
+  // 玉の周り8マスにいる、手番側（teban）の駒による守りの点数を返す（上限あり）
+  private guardPoints(king: Position, teban: number): number {
+    let sum: number = 0;
+    for(let dSuji: number = -1; dSuji <= 1; dSuji++) {
+      for(let dDan: number = -1; dDan <= 1; dDan++) {
+        if(dSuji === 0 && dDan === 0) continue;
+        const suji: number = king.suji + dSuji;
+        const dan: number = king.dan + dDan;
+        if(suji < 1 || suji > 9 || dan < 1 || dan > 9) continue;
+        const koma: number = this.ban[suji][dan];
+        if(!Koma.isSelf(teban, koma)) continue;
+        sum += Kyokumen.GUARD_POINTS[koma & 0x0f];
+      }
+    }
+    return sum < Kyokumen.KING_GUARD_MAX ? sum : Kyokumen.KING_GUARD_MAX;
+  }
+
+  // 局面評価関数。駒の価値の総和に、飛・角・竜・馬の利きの加点と、
+  // 玉の守りの加点を加えたもの。
   // 評価方法を発展させる際はここに各基準を追記していく
   evaluate(): number {
     let eva: number = 0;
@@ -452,6 +482,9 @@ class Kyokumen {
         eva += this.hand[teban][koma] * Kyokumen.komaValue[koma] * coefficient * sign;
       }
     }
+    // 玉の守り。先手の守りは加点、後手の守りは減点
+    eva += Kyokumen.KING_GUARD_UNIT *
+      (this.guardPoints(this.kingS, SENTE) - this.guardPoints(this.kingG, GOTE));
     return eva;
   }
 
