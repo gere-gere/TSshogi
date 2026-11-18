@@ -385,7 +385,31 @@ class Kyokumen {
     -10000, -580, -580, -580, -580, 0, -1200, -1400   // 後手の王～成駒～竜
   ];
 
-  // 局面評価関数。現時点では駒の価値の総和に過ぎないが、
+  // 飛・角・竜・馬の利き（飛び利きの空きマス）1マスあたりの加点
+  static readonly SLIDE_MOVE_VALUE: number = 2;
+  // 飛び方向（筋の増分, 段の増分）。飛・竜は縦横、角・馬は斜め
+  private static readonly ROOK_DIRS: number[][] = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+  private static readonly BISHOP_DIRS: number[][] = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+
+  // (suji, dan)にある飛び駒が、各方向に進める空きマスの数を返す。
+  // 駒（敵味方とも）に当たったらその手前まで。盤の端でも止まる。
+  private countSlideSquares(suji: number, dan: number, dirs: number[][]): number {
+    let count: number = 0;
+    for(let i: number = 0; i < dirs.length; i++) {
+      const dSuji: number = dirs[i][0];
+      const dDan: number = dirs[i][1];
+      let s: number = suji + dSuji;
+      let d: number = dan + dDan;
+      while(s >= 1 && s <= 9 && d >= 1 && d <= 9 && this.ban[s][d] === Koma.EMPTY) {
+        count++;
+        s += dSuji;
+        d += dDan;
+      }
+    }
+    return count;
+  }
+
+  // 局面評価関数。駒の価値の総和に、飛・角・竜・馬の利きの加点を加えたもの。
   // 評価方法を発展させる際はここに各基準を追記していく
   evaluate(): number {
     let eva: number = 0;
@@ -408,6 +432,15 @@ class Kyokumen {
           coefficient = 1.001 - dan * 0.001;
         }
         eva += Kyokumen.komaValue[koma] * coefficient;
+        // 飛・角・竜・馬は、飛び利きの空きマス数に応じて加点（後手は減点）
+        const komashu: number = koma & 0x0f;
+        if(komashu === Koma.HI || komashu === Koma.RYU) {
+          const sign: number = (koma & SENTE) !== 0 ? 1 : -1;
+          eva += sign * Kyokumen.SLIDE_MOVE_VALUE * this.countSlideSquares(suji, dan, Kyokumen.ROOK_DIRS);
+        } else if(komashu === Koma.KAK || komashu === Koma.UMA) {
+          const sign: number = (koma & SENTE) !== 0 ? 1 : -1;
+          eva += sign * Kyokumen.SLIDE_MOVE_VALUE * this.countSlideSquares(suji, dan, Kyokumen.BISHOP_DIRS);
+        }
       }
     }
     // 持駒の価値を全て加算
