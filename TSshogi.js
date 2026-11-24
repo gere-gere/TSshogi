@@ -872,7 +872,41 @@ class Kyokumen {
     s += '\n';
     return s;
   }
-  // 局面評価関数。現時点では駒の価値の総和に過ぎないが、
+  // (suji, dan)にある飛び駒が、各方向に進める空きマスの数を返す。
+  // 駒（敵味方とも）に当たったらその手前まで。盤の端でも止まる。
+  countSlideSquares(suji, dan, dirs) {
+    let count = 0;
+    for (let i = 0; i < dirs.length; i++) {
+      const dSuji = dirs[i][0];
+      const dDan = dirs[i][1];
+      let s = suji + dSuji;
+      let d = dan + dDan;
+      while (s >= 1 && s <= 9 && d >= 1 && d <= 9 && this.ban[s][d] === Koma.EMPTY) {
+        count++;
+        s += dSuji;
+        d += dDan;
+      }
+    }
+    return count;
+  }
+  // 玉の周り8マスにいる、手番側（teban）の駒による守りの点数を返す（上限あり）
+  guardPoints(king, teban) {
+    let sum = 0;
+    for (let dSuji = -1; dSuji <= 1; dSuji++) {
+      for (let dDan = -1; dDan <= 1; dDan++) {
+        if (dSuji === 0 && dDan === 0) continue;
+        const suji = king.suji + dSuji;
+        const dan = king.dan + dDan;
+        if (suji < 1 || suji > 9 || dan < 1 || dan > 9) continue;
+        const koma = this.ban[suji][dan];
+        if (!Koma.isSelf(teban, koma)) continue;
+        sum += Kyokumen.GUARD_POINTS[koma & 0x0f];
+      }
+    }
+    return sum < Kyokumen.KING_GUARD_MAX ? sum : Kyokumen.KING_GUARD_MAX;
+  }
+  // 局面評価関数。駒の価値の総和に、飛・角・竜・馬の利きの加点と、
+  // 玉の守りの加点を加えたもの。
   // 評価方法を発展させる際はここに各基準を追記していく
   evaluate() {
     let eva = 0;
@@ -895,6 +929,21 @@ class Kyokumen {
           coefficient = 1.001 - dan * 0.001;
         }
         eva += Kyokumen.komaValue[koma] * coefficient;
+        // 飛・角・竜・馬は、飛び利きの空きマス数に応じて加点（後手は減点）
+        const komashu = koma & 0x0f;
+        if (komashu === Koma.HI || komashu === Koma.RYU) {
+          const sign = (koma & SENTE) !== 0 ? 1 : -1;
+          eva +=
+            sign *
+            Kyokumen.SLIDE_MOVE_VALUE *
+            this.countSlideSquares(suji, dan, Kyokumen.ROOK_DIRS);
+        } else if (komashu === Koma.KAK || komashu === Koma.UMA) {
+          const sign = (koma & SENTE) !== 0 ? 1 : -1;
+          eva +=
+            sign *
+            Kyokumen.SLIDE_MOVE_VALUE *
+            this.countSlideSquares(suji, dan, Kyokumen.BISHOP_DIRS);
+        }
       }
     }
     // 持駒の価値を全て加算
@@ -906,6 +955,10 @@ class Kyokumen {
         eva += this.hand[teban][koma] * Kyokumen.komaValue[koma] * coefficient * sign;
       }
     }
+    // 玉の守り。先手の守りは加点、後手の守りは減点
+    eva +=
+      Kyokumen.KING_GUARD_UNIT *
+      (this.guardPoints(this.kingS, SENTE) - this.guardPoints(this.kingG, GOTE));
     return eva;
   }
 }
@@ -970,7 +1023,7 @@ Kyokumen.komaValue = [
   480,
   580,
   900,
-  1070, // 先手後手どちらでもない空～飛まで
+  1070,
   10000,
   580,
   580,
@@ -978,7 +1031,7 @@ Kyokumen.komaValue = [
   580,
   0,
   1200,
-  1400, // 先手後手どちらでもない王～成駒～竜まで
+  1400,
   0,
   100,
   290,
@@ -986,7 +1039,7 @@ Kyokumen.komaValue = [
   480,
   580,
   900,
-  1070, // 無、先手の歩～飛
+  1070,
   10000,
   580,
   580,
@@ -994,7 +1047,7 @@ Kyokumen.komaValue = [
   580,
   0,
   1200,
-  1400, // 先手の王～成駒～竜
+  1400,
   0,
   -100,
   -290,
@@ -1002,7 +1055,7 @@ Kyokumen.komaValue = [
   -480,
   -580,
   -900,
-  -1070, // 無、後手の歩～飛
+  -1070,
   -10000,
   -580,
   -580,
@@ -1012,6 +1065,46 @@ Kyokumen.komaValue = [
   -1200,
   -1400, // 後手の王～成駒～竜
 ];
+// 飛・角・竜・馬の利き（飛び利きの空きマス）1マスあたりの加点
+Kyokumen.SLIDE_MOVE_VALUE = 2;
+// 飛び方向（筋の増分, 段の増分）。飛・竜は縦横、角・馬は斜め
+Kyokumen.ROOK_DIRS = [
+  [0, -1],
+  [0, 1],
+  [-1, 0],
+  [1, 0],
+];
+Kyokumen.BISHOP_DIRS = [
+  [-1, -1],
+  [1, -1],
+  [-1, 1],
+  [1, 1],
+];
+// 玉の守りの評価。玉の周り8マスにいる味方駒を、駒種ごとの点数で合計する。
+// 金・馬・成駒（と金、成香、成桂、成銀）は5点、銀・竜は4点、その他（歩、香、桂、飛、角）は1点。
+// 添字は駒種（getKomashuの値）。玉は自分の隣にはいないので0。
+Kyokumen.GUARD_POINTS = [
+  0,
+  1,
+  1,
+  1,
+  4,
+  5,
+  1,
+  1,
+  0,
+  5,
+  5,
+  5,
+  5,
+  0,
+  5,
+  4, // 玉、と金、成香、成桂、成銀、（未使用）、馬、竜
+];
+// 守りの点数の上限。守りの基本形である金2枚＋銀1枚（5+5+4）の合計
+Kyokumen.KING_GUARD_MAX = 14;
+// 守りの点数1単位あたりの評価値
+Kyokumen.KING_GUARD_UNIT = 3;
 // 起動時に走るMainクラス。静的。
 class Main {
   /* 千日手の判定。履歴の末尾を現在の局面として判定する。
