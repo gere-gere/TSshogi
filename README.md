@@ -54,15 +54,19 @@ node.js には readline-sync モジュールのインストールが必要です
 #### ビルド（開発者向け）
 
 - `sorces/` 内の TypeScript だけを編集し、TSshogi.js は次の手順でまとめて生成します。  
-  （TypeScript がグローバルにインストールされ、`tsc` コマンドが使えることが前提です）
+  開発環境は Node.js 26 系（Mac で確認）です。
 
   ```
   npm install
   npm run build
+  npm run format
   ```
 
-  `tsc` で 1 ファイルにまとめ、末尾に `Main.main();` を追記します。  
-  整形（Prettier、設定は `.prettierrc`）はエディタ等で別途行ってください。
+  - `npm run build`: `tsc` で 1 ファイルにまとめ、末尾に `Main.main();` を追記します。
+  - `npm run format`: Prettier（設定は `.prettierrc`）で TSshogi.js を整形します。
+
+- TypeScript（4.3.5）と Prettier（3.10.1）は `package.json` で版を固定しています。グローバルへのインストールは不要です。
+- TypeScript を 4.3.5 に固定している理由: `outFile` と `module: system` は TypeScript 6.0 で廃止されたためです。この版の範囲で開発を続けます。
 
 ---
 
